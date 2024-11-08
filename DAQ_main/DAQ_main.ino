@@ -21,7 +21,7 @@ Adafruit_BNO055 bno = Adafruit_BNO055(55, 0x28);
 
 void setup() {
   // put your setup code here, to run once:
-  Serial.begin(115200);
+  Serial.begin(9600);
 
   while (!Serial) delay(10);  // wait for serial port to open!
 
