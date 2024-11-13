@@ -25,23 +25,25 @@ void setup() {
 
   while (!Serial) delay(10);  // wait for serial port to open!
 
-  // if (!bno.begin()) //abort if IMU not detected
-  // {
-  //   Serial.print("No BNO055 detected");
-  //   while (1);
-  // }
+  if (!bno.begin()) //abort if IMU not detected
+  {
+    Serial.println("No BNO055 detected");
+    while (1);
+  }
 
-  pinMode(A0, INPUT);
-  pinMode(A1, INPUT);
+  pinMode(A2, INPUT);
+  pinMode(A3, INPUT);
 }
 
 
 void loop() {
   // put your main code here, to run repeatedly:
 
-  // logPotentiometerData();
-  // logImuData();
-  test();
+  logImuData();
+  Serial.print(",");
+  logPotentiometerData();
+  Serial.println("");
+  // test();
   
 }
 
@@ -59,29 +61,36 @@ void logImuData(){
   // velocity of sensor in the direction it's facing
   headingVel = ACCEL_VEL_TRANSITION * linearAccelData.acceleration.x / cos(DEG_2_RAD * orientationData.orientation.x);
 
-  Serial.print("Heading: ");
-  Serial.println(orientationData.orientation.x);
-  Serial.print("Position: ");
+  // heading CH1
+  Serial.print(orientationData.orientation.x);
+  Serial.print(",");
+  // position X CH2
   Serial.print(xPos);
   Serial.print(" , ");
-  Serial.println(yPos);
-  Serial.print("Speed: ");
-  Serial.println(headingVel);
-  Serial.println("-------");
-
+  // position Y CH3
+  Serial.print(yPos);
+  Serial.print(" , ");
+  // speed CH4
+  Serial.print(headingVel);
 }
 
 void logPotentiometerData(){
   pot_1 = analogRead(A0);
   pot_2 = analogRead(A1);
-  Serial.println(pot_1);
-  Serial.println(pot_2);
+  // Pot_1 reading CH5
+  Serial.print(pot_1);
+  Serial.print(" , ");
+  // Pot_2 reading CH6
+  Serial.print(pot_2);
 }
 
-//for testing data loging:
+//for testing data loging with two CH :
 void test(){
-  Serial.println("1");
+  Serial.print("1");
+  Serial.print(" , ");
   Serial.println("2");
-  Serial.println("3");
+
+  Serial.print("3");
+  Serial.print(" , ");
   Serial.println("4");
 }
