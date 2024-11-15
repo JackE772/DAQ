@@ -7,7 +7,7 @@ int pot_1 = 0;
 int pot_2 = 0;
 
 //for reading from adafruit IMU
-double xPos = 0, yPos = 0, headingVel = 0;
+double xPos = 0, yPos = 0, zPos = 0, headingVel = 0;
 uint16_t BNO055_SAMPLERATE_DELAY_MS = 10; //how often to read data from the board. this was in test code idk if we need it
 
 double ACCEL_VEL_TRANSITION =  (double)(BNO055_SAMPLERATE_DELAY_MS) / 1000.0;
@@ -64,23 +64,29 @@ void logImuData(){
   // heading CH1
   Serial.print(orientationData.orientation.x);
   Serial.print(",");
-  // position X CH2
+  //heading CH2
+  Serial.print(orientationData.orientation.y);
+  Serial.print(",");
+  //heading CH3
+  Serial.print(orientationData.orientation.z);
+  Serial.print(",");
+  // position X CH4
   Serial.print(xPos);
   Serial.print(" , ");
-  // position Y CH3
+  // position Y CH5
   Serial.print(yPos);
   Serial.print(" , ");
-  // speed CH4
+  // speed CH6
   Serial.print(headingVel);
 }
 
 void logPotentiometerData(){
   pot_1 = analogRead(A0);
   pot_2 = analogRead(A1);
-  // Pot_1 reading CH5
+  // Pot_1 reading CH7
   Serial.print(pot_1);
   Serial.print(" , ");
-  // Pot_2 reading CH6
+  // Pot_2 reading CH8
   Serial.print(pot_2);
 }
 
