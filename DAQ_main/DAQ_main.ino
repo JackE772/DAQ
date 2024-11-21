@@ -1,3 +1,4 @@
+#include <SoftwareSerial.h>
 #include <Adafruit_BNO055.h>
 #include <Adafruit_Sensor.h>
 #include <Wire.h>
@@ -18,10 +19,17 @@ double DEG_2_RAD = 0.01745329251; //trig functions require radians, BNO055 outpu
 //                                   id, address
 Adafruit_BNO055 bno = Adafruit_BNO055(55, 0x28);
 
+// init gps on pins 4(rx) and 3(tx)
+TinyGPS gps;
+SoftwareSerial ss(4, 3);
+
 
 void setup() {
-  // put your setup code here, to run once:
+  // logging data on the 9600 band
   Serial.begin(9600);
+
+  // change if not useing 4800-band GPS
+  ss.begin(4800);
 
   while (!Serial) delay(10);  // wait for serial port to open!
 
@@ -42,6 +50,8 @@ void loop() {
   logImuData();
   Serial.print(",");
   logPotentiometerData();
+  Serial.print(",");
+  logGPSData();
   Serial.println("");
   // test();
   
@@ -88,6 +98,16 @@ void logPotentiometerData(){
   Serial.print(" , ");
   // Pot_2 reading CH8
   Serial.print(pot_2);
+}
+
+void logGPSData(){
+  float flat, flon;
+    unsigned long age;
+    gps.f_get_position(&flat, &flon, &age);
+    // LAT
+    Serial.print(flat == TinyGPS::GPS_INVALID_F_ANGLE ? 0.0 : flat, 6);
+    // LON
+    Serial.print(flon == TinyGPS::GPS_INVALID_F_ANGLE ? 0.0 : flon, 6);
 }
 
 //for testing data loging with two CH :
