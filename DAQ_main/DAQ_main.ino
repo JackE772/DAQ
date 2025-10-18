@@ -19,6 +19,7 @@
 #define REQUEST_UUID        "d69584e5-5142-414f-a90e-07c271d18574" //
 #define RESPONSE_UUID       "f4c8e2b3-3d1e-4f3a-8e2e-5f6b8c9d0a1b" //might use for passing data back and forth idk at this point
 #define TIMER_UUID          "f4c8e2b3-3d1e-4f3a-8e2e-5f6b8c9d0a1c"
+#define GPS_UUID            "d69584e5-5142-414f-a90e-07c271d18575"
 
 SPIClass spi = SPIClass(SPI);
 
@@ -42,10 +43,11 @@ HardwareSerial MySerial(2);  // UART2 //time logging
 TinyGPS gps;
 File logfile;
 
-BLEService wifiService(SERVICE_UUID);
+BLEService DAQService(SERVICE_UUID);
 BLECharacteristic requestCharacteristic(REQUEST_UUID, BLEWrite, 32);
 BLECharacteristic responseCharacteristic(RESPONSE_UUID, BLERead | BLENotify, 2048);
 BLECharacteristic timerCharacteristic(TIMER_UUID, BLERead, 32);
+BLECharacteristic gpsCharacteristic(GPS_UUID, BLEWrite | BLERead, 32);
 
 
 void setup() {
@@ -78,18 +80,27 @@ void setup() {
     while (1);
   }
 
+  if (!BLE.begin()) {
+    Serial.println("Starting BLE failed!");
+    while (1);
+  }
+
+  //ble code
   BLE.setLocalName("CAR_GO_VROOM");
-  BLE.setAdvertisedService(wifiService);
-  wifiService.addCharacteristic(requestCharacteristic);
-  wifiService.addCharacteristic(responseCharacteristic);
-  wifiService.addCharacteristic(timerCharacteristic);
-  BLE.addService(wifiService);
-  BLE.setEventHandler(BLEDisconnected, onCentralDisconnected);
+  BLE.setAdvertisedService(DAQService);
+  DAQService.addCharacteristic(requestCharacteristic);
+  DAQService.addCharacteristic(responseCharacteristic);
+  DAQService.addCharacteristic(timerCharacteristic);
+  DAQService.addCharacteristic(gpsCharacteristic);
+  BLE.addService(DAQService);
+  gpsCharacteristic.writeValue((uint8_t)0);
   BLE.advertise();
+  Serial.println("BLE Peripheral - Advertising");
 }
 
 
 void loop() {
+  BLE.poll();
   line = "";
   line2 = ""; //need two line vars bc we run out of ram on the board
 
@@ -109,6 +120,9 @@ void loop() {
   logfile.print(line);
   logfile.println(line2);
   logfile.flush();
+
+  BLEDevice central = BLE.central();
+
 }
 
 String logImuData(){
@@ -142,18 +156,15 @@ String logImuData(){
 
 String logGPSData(){
   float flat, flon;
-    unsigned long age;
-    gps.f_get_position(&flat, &flon, &age);
-    if (flat == TinyGPS::GPS_INVALID_F_ANGLE) flat = 0.0;
-    if (flon == TinyGPS::GPS_INVALID_F_ANGLE) flon = 0.0;
-    String result = String(flat, 6);
-    result += ",";
-    result += String(flon, 6);
+  unsigned long age;
+  gps.f_get_position(&flat, &flon, &age);
+  if (flat == TinyGPS::GPS_INVALID_F_ANGLE) flat = 0.0;
+  if (flon == TinyGPS::GPS_INVALID_F_ANGLE) flon = 0.0;
+  uint8_t hasFix = (flat != 0 && flon != 0) ? 1 : 0;
+  gpsCharacteristic.writeValue(hasFix);
+  String result = String(flat, 6);
+  result += ",";
+  result += String(flon, 6);
 
-    return result;
-}
-
-void onCentralDisconnected(BLEDevice central) {
-    Serial.println("Central disconnected");
-    Serial.println("Shutting down BLE");
+  return result;
 }
