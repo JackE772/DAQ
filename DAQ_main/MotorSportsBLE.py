@@ -6,8 +6,7 @@ from bleak import BleakScanner, BleakClient
 #ID of the BLE device  (set in ESP32 code)
 DEVICE_ADDRESS = "CAR_GO_VROOM"
 
-# Useing a custom characteristic UUID that your ESP32 exposes as writable
-# (don't use 0x2A2B as it's read-only)
+# Useing custom characteristic UUID from ESP32 code
 CURRENT_TIME_CHARACTERISTIC_UUID = "f4c8e2b3-3d1e-4f3a-8e2e-5f6b8c9d0a1c"
 GPS_STATUS_CHARACTERISTIC_UUID   = "d69584e5-5142-414f-a90e-07c271d18575"
 
