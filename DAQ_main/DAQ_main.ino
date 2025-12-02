@@ -27,6 +27,7 @@
 #define RESPONSE_UUID       "f4c8e2b3-3d1e-4f3a-8e2e-5f6b8c9d0a1b"
 #define TIMER_UUID          "f4c8e2b3-3d1e-4f3a-8e2e-5f6b8c9d0a1c"
 #define GPS_UUID            "d69584e5-5142-414f-a90e-07c271d18575"
+#define IMU_UUID            "d69584e5-5142-414f-a90e-07c271d18576"
 
 // ----- Physical constants -----
 const double DEG_2_RAD = 0.01745329251;
@@ -52,6 +53,7 @@ NimBLECharacteristic* requestChar = nullptr;
 NimBLECharacteristic* responseChar= nullptr;
 NimBLECharacteristic* timerChar   = nullptr;
 NimBLECharacteristic* gpsChar     = nullptr;
+NimBLECharacteristic* imuChar     = nullptr;
 
 // SD file
 File logfile;
@@ -166,10 +168,15 @@ void setup() {
     GPS_UUID,
     NIMBLE_PROPERTY::READ | NIMBLE_PROPERTY::WRITE
   );
+  imuChar = daqService->createCharacteristic(
+    IMU_UUID,
+    NIMBLE_PROPERTY::READ | NIMBLE_PROPERTY::WRITE
+  );
 
-  // initial GPS-fix flag = 0
+  // initial GPS-fix flag = 0 and clear imu data
   uint8_t zero = 0;
   gpsChar->setValue(&zero, 1);
+  imuChar->setValue(&zero, 1);
 
   daqService->start();
 
@@ -276,10 +283,35 @@ void writeCSV(uint32_t now_ms) {
   if (now_ms - last_flush > 1000) { logfile.flush(); last_flush = now_ms; }
 
   // ---- BLE GPS fix flag via NimBLE ----
-  uint8_t hasFix = (flat != 0.0f && flon != 0.0f) ? 1 : 0;
+  float gpsOut[2] = {flat, flon};
+  
   if (gpsChar) {
-    gpsChar->setValue(&hasFix, 1);
+    gpsChar->setValue(gpsOut);
     // Notify if you want push updates to the phone/app:
+    gpsChar->notify();
+  }
+
+  float imuOut[12] = {
+    euler.orientation.x,
+    euler.orientation.y,
+    euler.orientation.z,
+
+    lin.orientation.x,
+    lin.orientation.y,
+    lin.orientation.z,
+
+    ax_w,
+    ay_w,
+
+    vx,
+    vy,
+
+    xPos,
+    yPos
+  };
+
+  if (imuChar) {
+    imuChar->setValue(imuOut);
     gpsChar->notify();
   }
 }
