@@ -1,7 +1,9 @@
+import asyncio
 import sys
 from sideBar import Sidebar
 from GPSDisplay import GPSWidget
 from console import ConsoleWindow
+from ble_getter import DataGetter
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import QApplication, QMainWindow, QHBoxLayout, QWidget, QPushButton, QVBoxLayout, QSplitter
 
@@ -76,10 +78,28 @@ class MainWindow(QMainWindow):
 
 
 def setupWindow():
-        app = QApplication(sys.argv)
-        window = MainWindow()
-        window.showMaximized()
-        sys.exit(app.exec())
+    app = QApplication(sys.argv)
+    window = MainWindow()
+    window.showMaximized()
+    sys.exit(app.exec())
+    
+async def async_ble_loop(window):
+    data_getter = DataGetter()
+    connected = await data_getter.connect()
+    if not connected:
+        return
+
+    try:
+        while True:
+            gps_data = await data_getter.read_gps_status()
+            imu_data = await data_getter.read_imu_data()
+            
+            window.sidebar.console.log_message(f"GPS Data: {gps_data}")
+            window.sidebar.console.log_message(f"IMU Data: {imu_data}")
+            
+            await asyncio.sleep(0.5)  # poll every 0.5 seconds
+    finally:
+        await data_getter.disconnect()
 
 if __name__ == "__main__":
-    setupWindow()
+    window = setupWindow()

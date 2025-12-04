@@ -13,3 +13,6 @@ class ConsoleWindow(QWidget):
 
         # Example: Writing to the console
         self.console_output.append("GPS logger console initialized.")
+        
+    def log_message(self, message):
+        self.console_output.append(message)
