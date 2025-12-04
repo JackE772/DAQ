@@ -3,12 +3,13 @@ from PySide6.QtCore import Signal
 import os
 
 class Sidebar(QWidget):
-    # Optional signals so the main window can react to button clicks
-    button_clicked = Signal(str)
+    sourceType = Signal(str)
+
+    sourceFile = Signal(str)
 
     def __init__(self, parent=None):
         super().__init__(parent)
-
+        self.sourceType.emit("Bluetooth") # default source type
         self.setFixedWidth(400)  # sidebar width
         self.setStyleSheet("""
             QPushButton {
@@ -60,18 +61,21 @@ class Sidebar(QWidget):
             self.file_label.show()
             self.select_file_button.show()
             self.fileSelectorLable.show()
+            self.sourceType.emit("File")
         elif source == "Bluetooth":
             self.BLELabel.show()
             self.BLESelector.show()
             self.file_label.hide()
             self.select_file_button.hide()
             self.fileSelectorLable.hide()
+            self.sourceType.emit("Bluetooth")
         elif source == "Simulator (not implemented)":
             self.BLELabel.hide()
             self.BLESelector.hide()
             self.file_label.hide()
             self.select_file_button.hide()
             self.fileSelectorLable.hide()
+            self.sourceType.emit("Simulator")
 
     def open_file_dialog(self):
         # Open a standard file dialog (blocks until closed)
@@ -85,4 +89,4 @@ class Sidebar(QWidget):
         if file_path:  # User selected a file
             filename = os.path.basename(file_path)
             self.file_label.setText(f"Selected: {filename}")
-            print("Selected file path:", file_path)
+            self.sourceFile.emit(file_path)

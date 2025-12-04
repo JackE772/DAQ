@@ -1,6 +1,7 @@
 import sys
 from sideBar import Sidebar
-from GPSDisplay import GPS_Window
+from GPSDisplay import GPSWidget
+from console import ConsoleWindow
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import QApplication, QMainWindow, QHBoxLayout, QWidget, QPushButton, QVBoxLayout, QSplitter
 
@@ -10,6 +11,8 @@ from PySide6.QtWidgets import QApplication, QMainWindow, QHBoxLayout, QWidget, Q
 #highlight: #E3F8F6
 #boarders: #562D8B
 class MainWindow(QMainWindow):
+    loaded_file_path = None
+    sourceType = "Bluetooth"
 
     spliter_syle = """
             QSplitter {
@@ -43,16 +46,33 @@ class MainWindow(QMainWindow):
         self.sidebar.setMinimumWidth(100)
         self.sidebar.setMaximumWidth(600)
         splitter.addWidget(self.sidebar)
-        #self.sidebar.button_clicked.connect(self.handle_sidebar_click)
+        
+        #connect sidebar signals to main window slots
+        self.sidebar.sourceType.connect(self.handle_type_selected)
+        self.sidebar.sourceFile.connect(self.handle_file_selected)
 
         middleSpliter = QSplitter(Qt.Vertical)
         content = QWidget()
         content_layout = QVBoxLayout(content)
-        content_layout.addWidget(QPushButton("Button 1"))
-        middleSpliter.addWidget(QPushButton("Button 2"))
+        self.GPSDisplay = GPSWidget()
+        content_layout.addWidget(self.GPSDisplay)
+
+        console_widget = QWidget()
+        console_layout = QVBoxLayout(console_widget)
+        text_console = ConsoleWindow()
+        console_layout.addWidget(text_console)
+
         middleSpliter.addWidget(content)
-        middleSpliter.setSizes([100, 300])
+        middleSpliter.addWidget(console_widget)
         splitter.addWidget(middleSpliter)
+
+    def handle_type_selected(self, mode):
+        print("MainWindow opperating using: " + mode + " mode")
+        self.sourceType = mode
+
+    def handle_file_selected(self, path):
+        print("MainWindow loaded file: " + path)
+        self.loaded_file_path = path
 
 
 def setupWindow():
