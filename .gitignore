@@ -5,3 +5,5 @@ DAQPYTHON/.idea/misc.xml
 DAQPYTHON/.idea/modules.xml
 DAQPYTHON/.idea/vcs.xml
 DAQPYTHON/main.py
+DAQ_main/dataProssesing/GUI/__pycache__
+.vscode/settings.json
