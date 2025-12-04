@@ -14,31 +14,49 @@ class DataGetter:
     def __init__(self):
         self.client = None
 
-    async def connect(self):
-        print("Scanning for ESP32 BLE device...")
+    async def connect(self, logger=None):
+        if logger:
+            logger.log_message("Scanning for ESP32 BLE device...")
+        else:
+            print("Scanning for ESP32 BLE device...")
         devices = await BleakScanner.discover()
 
         target = None
         for d in devices:
-            print(f"Found: {d.name}, {d.address}")
+            if logger:
+                logger.log_message(f"Found device: {d.name} ({d.address})")
+            else:
+                print(f"Found device: {d.name} ({d.address})")
             if d.name and "car_go_vroom" in d.name.lower():
                 target = d
-                print(f"Target device found: {d.name}, {d.address}")
+                if logger:
+                    logger.log_message(f"Found target device: {d.name} ({d.address})")
+                else:
+                    print(f"Found target device: {d.name} ({d.address})")
                 break
 
         if not target:
-            print("Could not find ESP32 with name 'CAR_GO_VROOM'")
+            if logger:
+                logger.log_message("Target device not found.")
+            else:
+                print("Target device not found.")
             return False
 
         self.client = BleakClient(target)
         await self.client.connect()
-        print(f"Connected to {target.name} ({target.address})")
+        if logger:
+            logger.log_message(f"Connected to {target.name} ({target.address})")
+        else:
+            print(f"Connected to {target.name} ({target.address})")
         return True
     
-    async def disconnect(self):
+    async def disconnect(self, logger=None):
         if self.client:
             await self.client.disconnect()
-            print("Disconnected from BLE device")
+            if logger:
+                logger.log_message("Disconnected from device.")
+            else:
+                print("Disconnected from device.")
 
     async def read_gps_status(self):
         if self.client:

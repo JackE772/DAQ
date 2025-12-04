@@ -6,6 +6,7 @@ from console import ConsoleWindow
 from ble_getter import DataGetter
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import QApplication, QMainWindow, QHBoxLayout, QWidget, QPushButton, QVBoxLayout, QSplitter
+from qasync import QEventLoop, asyncSlot
 
 #color pallette
 #background: #0E1935
@@ -61,8 +62,8 @@ class MainWindow(QMainWindow):
 
         console_widget = QWidget()
         console_layout = QVBoxLayout(console_widget)
-        text_console = ConsoleWindow()
-        console_layout.addWidget(text_console)
+        self.text_console = ConsoleWindow()
+        console_layout.addWidget(self.text_console)
 
         middleSpliter.addWidget(content)
         middleSpliter.addWidget(console_widget)
@@ -75,18 +76,12 @@ class MainWindow(QMainWindow):
     def handle_file_selected(self, path):
         print("MainWindow loaded file: " + path)
         self.loaded_file_path = path
-
-
-def setupWindow():
-    app = QApplication(sys.argv)
-    window = MainWindow()
-    window.showMaximized()
-    sys.exit(app.exec())
     
 async def async_ble_loop(window):
     data_getter = DataGetter()
-    connected = await data_getter.connect()
+    connected = await data_getter.connect(logger=window.text_console)
     if not connected:
+        window.text_console.log_message("Failed to connect BLE")
         return
 
     try:
@@ -94,12 +89,28 @@ async def async_ble_loop(window):
             gps_data = await data_getter.read_gps_status()
             imu_data = await data_getter.read_imu_data()
             
-            window.sidebar.console.log_message(f"GPS Data: {gps_data}")
-            window.sidebar.console.log_message(f"IMU Data: {imu_data}")
+            window.text_console.log_message(f"GPS Data: {gps_data}")
+            window.text_console.log_message(f"IMU Data: {imu_data}")
             
             await asyncio.sleep(0.5)  # poll every 0.5 seconds
     finally:
-        await data_getter.disconnect()
+        await data_getter.disconnect(logger=window.text_console)
+        
+def main():
+    app = QApplication(sys.argv)
+    window = MainWindow()
+    window.showMaximized()
+
+    # Integrate asyncio loop with Qt
+    loop = QEventLoop(app)
+    asyncio.set_event_loop(loop)
+
+    loop.create_task(async_ble_loop(window))
+    
+    with loop:
+        loop.run_forever()
+    
 
 if __name__ == "__main__":
-    window = setupWindow()
+    main()
+    
