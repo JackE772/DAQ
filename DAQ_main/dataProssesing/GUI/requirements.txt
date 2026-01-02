@@ -1,0 +1,5 @@
+Math
+Sys
+PySide6 == 6.7.0
+qasync == 0.28.0
+bleak
