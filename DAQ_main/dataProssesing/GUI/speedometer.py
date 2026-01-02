@@ -7,7 +7,7 @@ class SpeedometerWidget(QWidget):
     def __init__(self):
         super().__init__()
         self.speed = 0  # set from your async BLE loop
-        
+
     def set_speed(self, value):
         self.speed = max(0, min(value, 200))  # clamp
         self.update()

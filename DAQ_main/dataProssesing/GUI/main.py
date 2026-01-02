@@ -1,5 +1,7 @@
+#using asyncio for asynchronous programming this is deprecated and included in python
+#TODO refacter to avoid using asyncio
 import asyncio
-from curses import window
+
 import math
 import sys
 from sideBar import Sidebar
@@ -52,10 +54,10 @@ class MainWindow(QMainWindow):
         self.sidebar.setMinimumWidth(100)
         self.sidebar.setMaximumWidth(600)
         splitter.addWidget(self.sidebar)
-        
-        self.speedometer = SpeedometerWidget()
-        layout.addWidget(self.speedometer)
-        
+
+        #self.speedometer = SpeedometerWidget()
+        #layout.addWidget(self.speedometer)
+
         #connect sidebar signals to main window slots
         self.sidebar.sourceType.connect(self.handle_type_selected)
         self.sidebar.sourceFile.connect(self.handle_file_selected)
@@ -75,14 +77,19 @@ class MainWindow(QMainWindow):
         middleSpliter.addWidget(console_widget)
         splitter.addWidget(middleSpliter)
 
+        rightSideSlider = QSplitter(Qt.Vertical)
+        self.speedometer = SpeedometerWidget()
+        rightSideSlider.addWidget(self.speedometer)
+        splitter.addWidget(rightSideSlider)
+
     def handle_type_selected(self, mode):
-        print("MainWindow opperating using: " + mode + " mode")
+        print(f"MainWindow opperating using: {mode} mode")
         self.sourceType = mode
 
     def handle_file_selected(self, path):
-        print("MainWindow loaded file: " + path)
+        print(f"MainWindow loaded file: {path}")
         self.loaded_file_path = path
-    
+
 async def async_ble_loop(window):
     data_getter = DataGetter()
     connected = await data_getter.connect(logger=window.text_console)
@@ -94,19 +101,18 @@ async def async_ble_loop(window):
         while True:
             gps_data = await data_getter.read_gps_status()
             imu_data = await data_getter.read_imu_data()
-            
-            
+
             window.text_console.log_message(f"GPS Data: {gps_data}")
             window.text_console.log_message(f"IMU Data: {imu_data}")
-            
+
             speed = math.sqrt(gps_data["vx"]**2 + gps_data["vy"]**2)
-            
+
             window.GPSDisplay.speedometer.set_speed(speed)
-            
+
             await asyncio.sleep(0.5)  # poll every 0.5 seconds
     finally:
         await data_getter.disconnect(logger=window.text_console)
-        
+
 def main():
     app = QApplication(sys.argv)
     window = MainWindow()
@@ -117,11 +123,9 @@ def main():
     asyncio.set_event_loop(loop)
 
     loop.create_task(async_ble_loop(window))
-    
+
     with loop:
         loop.run_forever()
-    
 
 if __name__ == "__main__":
     main()
-    
