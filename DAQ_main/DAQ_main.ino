@@ -296,9 +296,9 @@ void writeCSV(uint32_t now_ms) {
     euler.orientation.y,
     euler.orientation.z,
 
-    lin.orientation.x,
-    lin.orientation.y,
-    lin.orientation.z,
+    lin.acceleration.x,
+    lin.acceleration.y,
+    lin.acceleration.z,
 
     ax_w,
     ay_w,
