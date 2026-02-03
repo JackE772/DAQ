@@ -14,30 +14,30 @@ from PySide6.QtWidgets import QApplication, QMainWindow, QHBoxLayout, QWidget, Q
 from qasync import QEventLoop, asyncSlot
 
 #color pallette
-#background: #0E1935
-#buttons: #90E2DD
-#highlight: #E3F8F6
-#boarders: #562D8B
+background = "#0F0000"
+buttons = "#90E2DD"
+highlight = "#E3F8F6"
+borders = "#7a0b0b"
 class MainWindow(QMainWindow):
     loaded_file_path = None
     gps_updated = Signal(str)
     sourceType = "Bluetooth"
     playback = Signal(bool)
 
-    spliter_syle = """
-            QSplitter {
-                background-color: #0E1935;
-            }
-            QSplitter::handle:horizontal {
-                background-color: #562D8B;
+    spliter_syle = f"""
+            QSplitter {{
+                background-color: {background};
+            }}
+            QSplitter::handle:horizontal {{
+                background-color: {borders};
                 width: 2px;
                 margin: 2px;
-            }
-            QSplitter::handle:vertical {
-                background-color: #562D8B;
+            }}
+            QSplitter::handle:vertical {{
+                background-color: {borders};
                 height: 2px;
                 margin: 2px;
-            }
+            }}
         """
     def __init__(self):
         super().__init__()
@@ -74,7 +74,7 @@ class MainWindow(QMainWindow):
         self.pausePlaybackButton = QPushButton("pause")
         self.pausePlaybackButton.clicked.connect(self.pause_playback)
         self.buttonContent = QWidget()
-        self.buttonContent.setMaximumHeight(50)
+        self.buttonContent.setMaximumHeight(200)
         playbackLayout = QHBoxLayout(self.buttonContent)
         playbackLayout.addWidget(self.playbackButton)
         playbackLayout.addWidget(self.pausePlaybackButton)
@@ -90,7 +90,7 @@ class MainWindow(QMainWindow):
         splitter.addWidget(middleSpliter)
 
         rightSideSlider = QSplitter(Qt.Vertical)
-        self.speedometer = SpeedometerWidget(self.GPSDisplay)
+        self.speedometer = SpeedometerWidget(self.GPSDisplay, main_window=self)
         rightSideSlider.addWidget(self.speedometer)
         splitter.addWidget(rightSideSlider)
 

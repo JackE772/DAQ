@@ -38,8 +38,7 @@ const uint16_t BNO055_SAMPLERATE_DELAY_MS = 10;
 // ====== GLOBAL OBJECTS ======
 // ============================
 
-// Custom SPI bus for SD card
-SPIClass spi = SPIClass(SPI);
+
 
 // IMU and GPS
 Adafruit_BNO055 bno = Adafruit_BNO055(55, 0x28);
@@ -100,6 +99,8 @@ void setup() {
   Serial.begin(9600);
   // We are using a 9600 baud GPS DO NOT CHANGE THE MAGIC NUMBER
   MySerial.begin(9600, SERIAL_8N1, 18, 1);  // (pins unchanged)
+
+  SPIClass spi;
   // Initialize custom SPI pins for SD card
   spi.begin(SD_SCK, SD_MISO, SD_MOSI, SD_CS);  // SCK, MISO, MOSI, SS
 
@@ -296,9 +297,9 @@ void writeCSV(uint32_t now_ms) {
     euler.orientation.y,
     euler.orientation.z,
 
-    lin.orientation.x,
-    lin.orientation.y,
-    lin.orientation.z,
+    lin.acceleration.x,
+    lin.acceleration.y,
+    lin.acceleration.z,
 
     ax_w,
     ay_w,

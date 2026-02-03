@@ -4,18 +4,25 @@ from PySide6.QtCore import Qt, QRectF, QPointF
 import math
 
 class SpeedometerWidget(QWidget):
-    def __init__(self, GPS):
+    def __init__(self, GPS, main_window):
         super().__init__()
         self.speed = 0  # set from your async BLE loop
         self.speed_lim = 50 #max speed the needle can dispaly
         self.GPS = GPS
         self.GPS.output_speed.connect(self.set_speed)
         self.max_speed = self.speed
+        self.speed_log = []
+        
+        self.main_window = main_window
 
     def set_speed(self, value):
         self.speed = max(0, min(value, self.speed_lim))  # clamp
-        if(self.speed > self.max_speed):
-            self.max_speed = self.speed
+        self.speed_log.append(self.speed)
+        
+        if len(self.speed_log) > 20:  # keep last 100 speeds
+            self.speed_log.pop(0)
+        
+        self.max_speed = max(self.speed_log)
         self.update()
 
     def paintEvent(self, event):
@@ -28,15 +35,15 @@ class SpeedometerWidget(QWidget):
         cy = self.height() / 2
 
         # draw arc
-        painter.setPen(QPen(QColor("#90E2DD"), 5))
+        painter.setPen(QPen(QColor("#990000"), 5))
         painter.drawArc(
             QRectF(cx - r, cy - r, 2*r, 2*r),
-            225 * 16,  # start at ~225°
-            270 * 16   # sweep
+            45 * 16,  # start at ~225°
+            90 * 16   # sweep
         )
 
         # draw arc showing max speed
-        max_angle = (self.max_speed / self.speed_lim) * 270
+        max_angle = (self.max_speed / self.speed_lim) * 90
         painter.setPen(QPen(QColor("#FF9999"), 5))
         painter.drawArc(
             QRectF((cx - r), (cy - r), 2*r, 2*r),
@@ -45,11 +52,11 @@ class SpeedometerWidget(QWidget):
         )
 
         # needle angle (speed mapped to 0–speed lim)
-        angle_deg = 225 + (self.speed / self.speed_lim) * 270
+        angle_deg = 225 + (self.speed / self.speed_lim) * 90
         angle_rad = math.radians(angle_deg)
 
         # needle
-        painter.setPen(QPen(QColor("#E3F8F6"), 6))
+        painter.setPen(QPen(QColor("#FFFFFF"), 6))
         x2 = cx + r * math.cos(angle_rad)
         y2 = cy + r * math.sin(angle_rad)
         painter.drawLine(QPointF(cx, cy), QPointF(x2, y2))
