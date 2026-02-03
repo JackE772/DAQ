@@ -45,6 +45,9 @@ class GPSWidget(QWidget):
         #display setting
         self.scale = 10  # pixels per meter
 
+        #imu data
+        self.vxs_imu = []
+        self.vys_imu = []
 
         # GPS data
         self.lats = []
@@ -191,7 +194,7 @@ class GPSWidget(QWidget):
         if self.width() <= 0 or self.height() <= 0:
             return
         self.grid_cache = QPixmap(self.size())
-        self.grid_cache.fill(QColor("#0E1935"))
+        self.grid_cache.fill(QColor("#350E0E"))
         p = QPainter(self.grid_cache)
         self.draw_grid(p)
         p.end()
@@ -218,6 +221,10 @@ class GPSWidget(QWidget):
 
         lat = self.lats[self.playback_index]
         lon = self.lons[self.playback_index]
+        vx_imu = self.vxs_imu[self.playback_index]
+        vy_imu = self.vys_imu[self.playback_index]
+        
+        velocity_imu = math.sqrt(vx_imu**2 + vy_imu**2) * 2.23693629 #convertion factior from meters/s to miles/h
 
         point = self.latlon_to_point(lat, lon)
 
@@ -236,6 +243,7 @@ class GPSWidget(QWidget):
                 return
             speed = (distance/self.scale) / (deltaTime/1000) #speed in meters/s
             speed *= 2.23693629 #convertion factior from meters/s to miles/h
+            speed = velocity_imu
         else:
             speed = 0
 
@@ -282,6 +290,8 @@ class GPSWidget(QWidget):
 
         self.lats.clear()
         self.lons.clear()
+        self.vxs_imu.clear()
+        self.vys_imu.clear()
 
         with open(path, "r", newline="") as csvfile:
             reader = csv.reader(csvfile)
@@ -295,6 +305,8 @@ class GPSWidget(QWidget):
                 lat_key = next(k for k in header_map if "lat" in k)
                 lon_key = next(k for k in header_map if "lon" in k)
                 time_key = next(k for k in header_map if "millis" in k)
+                vx_imu_key = next(k for k in header_map if "vx_imu" in k)
+                vy_imu_key = next(k for k in header_map if "vy_imu" in k)
             except StopIteration:
                 self.main_window.text_console.log_message(
                     f"Loaded File does not have propper data labeling \n unable to load lon/lat data cols"
@@ -304,36 +316,48 @@ class GPSWidget(QWidget):
             lat_idx = header_map[lat_key]
             lon_idx = header_map[lon_key]
             time_idx = header_map[time_key]
+            vx_imu_idx = header_map[vx_imu_key]
+            vy_imu_idx = header_map[vy_imu_key]
 
             for row in reader:
                 try:
                     self.lats.append(float(row[lat_idx]))
                     self.lons.append(float(row[lon_idx]))
                     self.times.append(int(row[time_idx]))
+                    self.vxs_imu.append(float(row[vx_imu_idx]))
+                    self.vys_imu.append(float(row[vy_imu_idx]))
                 except (ValueError, IndexError):
                     continue  # skip bad rows
 
         #remove values from before the GPS inits
         new_lats = []
         new_lons = []
+        new_vxs_imu = []
+        new_vys_imu = []
         new_times = []
         self.rows_skiped = 0
 
-        for lat, lon, time in zip(self.lats, self.lons, self.times):
+        for lat, lon, vx_imu, vy_imu, time in zip(self.lats, self.lons, self.vxs_imu, self.vys_imu, self.times):
             if lat != 0 and lon != 0:
                 new_lats.append(lat)
                 new_lons.append(lon)
+                new_vxs_imu.append(vx_imu)
+                new_vys_imu.append(vy_imu)
                 new_times.append(time)
                 self.rows_skiped += 1
 
         self.lats = new_lats
         self.lons = new_lons
+        self.vxs_imu = new_vxs_imu
+        self.vys_imu = new_vys_imu
         self.times = new_times
 
         self.lat_offset = self.lats[0]
         self.lon_offset = self.lons[0]
+        self.vx_imu = self.vxs_imu[0]
+        self.vy_imu = self.vys_imu[0]
         self.time_offset = self.times[0]
 
         self.main_window.text_console.log_message(
-            f"Loaded {len(self.lats)} GPS points (lat, lon)"
+            f"Loaded {len(self.lats)} GPS points (lat, lon)\n Loaded {len(self.vxs_imu)} IMU velocity points (vx_imu, vy_imu)\n skipped {self.rows_skiped} rows with no GPS lock"
         )
