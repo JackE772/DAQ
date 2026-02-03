@@ -9,7 +9,7 @@ from GPSDisplay import GPSWidget
 from console import ConsoleWindow
 from ble_getter import DataGetter
 from speedometer import SpeedometerWidget
-from PySide6.QtCore import Qt
+from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import QApplication, QMainWindow, QHBoxLayout, QWidget, QPushButton, QVBoxLayout, QSplitter
 from qasync import QEventLoop, asyncSlot
 
@@ -20,7 +20,9 @@ from qasync import QEventLoop, asyncSlot
 #boarders: #562D8B
 class MainWindow(QMainWindow):
     loaded_file_path = None
+    gps_updated = Signal(str)
     sourceType = "Bluetooth"
+    playback = Signal(bool)
 
     spliter_syle = """
             QSplitter {
@@ -65,8 +67,18 @@ class MainWindow(QMainWindow):
         middleSpliter = QSplitter(Qt.Vertical)
         content = QWidget()
         content_layout = QVBoxLayout(content)
-        self.GPSDisplay = GPSWidget()
+        self.GPSDisplay = GPSWidget(self)
         content_layout.addWidget(self.GPSDisplay)
+        self.playbackButton = QPushButton("play")
+        self.playbackButton.clicked.connect(self.start_playback)
+        self.pausePlaybackButton = QPushButton("pause")
+        self.pausePlaybackButton.clicked.connect(self.pause_playback)
+        self.buttonContent = QWidget()
+        self.buttonContent.setMaximumHeight(50)
+        playbackLayout = QHBoxLayout(self.buttonContent)
+        playbackLayout.addWidget(self.playbackButton)
+        playbackLayout.addWidget(self.pausePlaybackButton)
+        content_layout.addWidget(self.buttonContent)
 
         console_widget = QWidget()
         console_layout = QVBoxLayout(console_widget)
@@ -78,7 +90,7 @@ class MainWindow(QMainWindow):
         splitter.addWidget(middleSpliter)
 
         rightSideSlider = QSplitter(Qt.Vertical)
-        self.speedometer = SpeedometerWidget()
+        self.speedometer = SpeedometerWidget(self.GPSDisplay)
         rightSideSlider.addWidget(self.speedometer)
         splitter.addWidget(rightSideSlider)
 
@@ -90,9 +102,31 @@ class MainWindow(QMainWindow):
         print(f"MainWindow loaded file: {path}")
         self.loaded_file_path = path
 
+    def start_playback(self):
+        self.playback.emit(True)
+
+    def pause_playback(self):
+        self.playback.emit(False)
+
+def emit_GPS_pos_from_file(window):
+    window.gps_updated.emit(window.loaded_file_path)
+
+async def async_update_GPS_pos(window):
+    window.text_console.log_message("seting up GPS data loging from file")
+
+    while True:
+        await asyncio.sleep(0.5)
+        if(window.loaded_file_path != None):
+            window.text_console.log_message(f"loading GPS position from {window.loaded_file_path}")
+            break
+
+    emit_GPS_pos_from_file(window)
+
 async def async_ble_loop(window):
     data_getter = DataGetter()
     connected = await data_getter.connect(logger=window.text_console)
+    window.text_console.log_message("seting up BLE data streaming")
+
     if not connected:
         window.text_console.log_message("Failed to connect BLE")
         return
@@ -123,6 +157,7 @@ def main():
     asyncio.set_event_loop(loop)
 
     loop.create_task(async_ble_loop(window))
+    loop.create_task(async_update_GPS_pos(window))
 
     with loop:
         loop.run_forever()

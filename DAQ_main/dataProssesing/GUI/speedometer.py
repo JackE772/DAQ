@@ -4,12 +4,18 @@ from PySide6.QtCore import Qt, QRectF, QPointF
 import math
 
 class SpeedometerWidget(QWidget):
-    def __init__(self):
+    def __init__(self, GPS):
         super().__init__()
         self.speed = 0  # set from your async BLE loop
+        self.speed_lim = 50 #max speed the needle can dispaly
+        self.GPS = GPS
+        self.GPS.output_speed.connect(self.set_speed)
+        self.max_speed = self.speed
 
     def set_speed(self, value):
-        self.speed = max(0, min(value, 200))  # clamp
+        self.speed = max(0, min(value, self.speed_lim))  # clamp
+        if(self.speed > self.max_speed):
+            self.max_speed = self.speed
         self.update()
 
     def paintEvent(self, event):
@@ -29,8 +35,17 @@ class SpeedometerWidget(QWidget):
             270 * 16   # sweep
         )
 
-        # needle angle (speed mapped to 0–200)
-        angle_deg = 225 + (self.speed / 200) * 270
+        # draw arc showing max speed
+        max_angle = (self.max_speed / self.speed_lim) * 270
+        painter.setPen(QPen(QColor("#FF9999"), 5))
+        painter.drawArc(
+            QRectF((cx - r), (cy - r), 2*r, 2*r),
+            135 * 16,  # start at ~225°
+            -max_angle * 16   # sweep
+        )
+
+        # needle angle (speed mapped to 0–speed lim)
+        angle_deg = 225 + (self.speed / self.speed_lim) * 270
         angle_rad = math.radians(angle_deg)
 
         # needle
@@ -42,4 +57,4 @@ class SpeedometerWidget(QWidget):
         # text
         painter.setPen(Qt.white)
         painter.setFont(self.font())
-        painter.drawText(self.rect(), Qt.AlignCenter, f"{int(self.speed)} km/h")
+        painter.drawText(self.rect(), Qt.AlignCenter, f"{int(self.speed)} m/h")

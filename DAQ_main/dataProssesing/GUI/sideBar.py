@@ -30,7 +30,7 @@ class Sidebar(QWidget):
         self.scourceLable = QLabel("Select Data Source:")
         layout.addWidget(self.scourceLable)
         self.scourceSelector = QComboBox()
-        self.scourceSelector.addItems(["Bluetooth", "File", "Simulator (not implemented)"])
+        self.scourceSelector.addItems(["Bluetooth", "File"])
         layout.addWidget(self.scourceSelector)
 
         #file selection UI
