@@ -74,7 +74,7 @@ class MainWindow(QMainWindow):
         self.pausePlaybackButton = QPushButton("pause")
         self.pausePlaybackButton.clicked.connect(self.pause_playback)
         self.buttonContent = QWidget()
-        self.buttonContent.setMaximumHeight(200)
+        self.buttonContent.setMaximumHeight(50)
         playbackLayout = QHBoxLayout(self.buttonContent)
         playbackLayout.addWidget(self.playbackButton)
         playbackLayout.addWidget(self.pausePlaybackButton)
