@@ -12,16 +12,16 @@ class SpeedometerWidget(QWidget):
         self.GPS.output_speed.connect(self.set_speed)
         self.max_speed = self.speed
         self.speed_log = []
-        
+
         self.main_window = main_window
 
     def set_speed(self, value):
         self.speed = max(0, min(value, self.speed_lim))  # clamp
         self.speed_log.append(self.speed)
-        
+
         if len(self.speed_log) > 20:  # keep last 100 speeds
             self.speed_log.pop(0)
-        
+
         self.max_speed = max(self.speed_log)
         self.update()
 
