@@ -4,6 +4,20 @@ from PySide6.QtCore import Qt, QPointF, QTimer, Signal
 import csv
 import math
 
+class DataPoint():
+    latitude = 0
+    longitude = 0
+    acceleration = 0
+    speed = 0
+    time = 0
+    
+    def __init__(self, x, y, s, a, t):
+        self.latitude = x
+        self.longitude = y
+        self.speed = s
+        self.acceleration = a
+        self.time = t
+
 class GPSWidget(QWidget):
     rows_skiped = 0
     playback = False
@@ -46,20 +60,7 @@ class GPSWidget(QWidget):
         #display setting
         self.scale = 10  # pixels per meter
 
-        #imu data
-        self.vxs_imu = []
-        self.vys_imu = []
-        self.axs_imu = []
-        self.ays_imu = []
-        self.azs_imu = []
-
-        # GPS data
-        self.lats = []
-        self.lons = []
-        self.times = []
-        self.lat_offset = 0.0
-        self.lon_offset = 0.0
-        self.time_offset = 0.0
+        self.data: list[DataPoint] = list()
 
         #coloring the line
         self.speeds = []
@@ -93,11 +94,11 @@ class GPSWidget(QWidget):
         p.setPen(QColor(255, 255, 255))
         p.setFont(p.font())
 
-        if self.playback_index < len(self.times):
-            t = self.times[self.playback_index]/1000
+        if self.playback_index < len(self.data):
+            t = self.data[self.playback_index].time/1000
             p.drawText(10, 20, f"Time: {t:.2f}s")
         elif(self.playback_index != 0):
-            t = self.times[-1]/1000
+            t = self.data[-1].time/1000
             p.drawText(10, 20, f"Time: {t:.2f}s")
 
         # Apply zoom around center
@@ -217,47 +218,26 @@ class GPSWidget(QWidget):
             return 0
 
     def latlon_to_point(self, lat, lon):
-         # Earth radius approximation
-        meters_per_deg_lat = 111_320
-        meters_per_deg_lon = 111_320 * math.cos(math.radians(self.lat_offset))
-
-        x = (lon - self.lon_offset) * meters_per_deg_lon
-        y = -(lat - self.lat_offset) * meters_per_deg_lat
+        x = (lon) * 111_320
+        y = -(lat) * 111_320
 
         return QPointF(x * self.scale, y * self.scale)
 
     def playback_step(self):
-        if self.playback_index >= len(self.lats):
+        if self.playback_index >= len(self.data):
             self.timer.stop()
             return
 
-        lat = self.lats[self.playback_index]
-        lon = self.lons[self.playback_index]
-        vx_imu = self.vxs_imu[self.playback_index]
-        vy_imu = self.vys_imu[self.playback_index]
+        latitude = self.data[self.playback_index].latitude
+        longitude = self.data[self.playback_index].longitude
+        acceleration = self.data[self.playback_index].acceleration
+        speed = self.data[self.playback_index].speed
+
+        point = self.latlon_to_point(latitude, longitude)
         
-        velocity_imu = math.sqrt(vx_imu**2 + vy_imu**2) * 2.23693629 #convertion factior from meters/s to miles/h
-
-        point = self.latlon_to_point(lat, lon)
-
-        # compute speed
-        if self.points:
-            try:
-                prev_point = self.points[self.playback_index - self.playback_step_size]
-            except IndexError:
-                prev_point = self.points[-1]
-            dx = point.x() - prev_point.x()
-            dy = point.y() - prev_point.y()
-            distance = math.sqrt(dx * dx + dy * dy) #gives distance in m * display scale factor
-            deltaTime = self.times[self.playback_index] - self.times[self.playback_index - self.playback_step_size]
-            if(deltaTime <= 0):
-                print("delta time <0")
-                return
-            speed = (distance/self.scale) / (deltaTime/1000) #speed in meters/s
-            speed *= 2.23693629 #convertion factior from meters/s to miles/h
-            speed = velocity_imu
-        else:
-            speed = 0
+        self.main_window.text_console.log_message(
+            f"playback status {point}"
+        )
 
         if(speed > 0):
             self.output_speed.emit(speed)
@@ -274,7 +254,6 @@ class GPSWidget(QWidget):
         self.points.append(point)
         self.playback_index += self.playback_step_size
         self.update()
-
 
     def set_playback_status(self, status):
         self.main_window.text_console.log_message(
@@ -301,10 +280,7 @@ class GPSWidget(QWidget):
         self.playback_index = 0
         self.points.clear()
 
-        self.lats.clear()
-        self.lons.clear()
-        self.vxs_imu.clear()
-        self.vys_imu.clear()
+        self.data.clear()
 
         with open(path, "r", newline="") as csvfile:
             reader = csv.reader(csvfile)
@@ -320,9 +296,8 @@ class GPSWidget(QWidget):
                 time_key = next(k for k in header_map if "millis" in k)
                 vx_imu_key = next(k for k in header_map if "vx_imu" in k)
                 vy_imu_key = next(k for k in header_map if "vy_imu" in k)
-                ax_imu_key = next(k for k in header_map if "ax_b" in k)
-                ay_imu_key = next(k for k in header_map if "ay_b" in k)
-                az_imu_key = next(k for k in header_map if "az_b" in k)
+                ax_w_key = next(k for k in header_map if "ax_w" in k)
+                ay_w_key = next(k for k in header_map if "ay_w" in k)
             except StopIteration:
                 self.main_window.text_console.log_message(
                     f"Loaded File does not have propper data labeling \n unable to load lon/lat data cols"
@@ -334,70 +309,31 @@ class GPSWidget(QWidget):
             time_idx = header_map[time_key]
             vx_imu_idx = header_map[vx_imu_key]
             vy_imu_idx = header_map[vy_imu_key]
-            ax_imu_idx = header_map[ax_imu_key]
-            ay_imu_idx = header_map[ay_imu_key]
-            az_imu_idx = header_map[az_imu_key]
+            ax_w_idx = header_map[ax_w_key]
+            ay_w_idx = header_map[ay_w_key]
+            
+            data_import_list: list[DataPoint] = list()
 
             for row in reader:
                 try:
-                    self.lats.append(float(row[lat_idx]))
-                    self.lons.append(float(row[lon_idx]))
-                    self.times.append(int(row[time_idx]))
-                    self.vxs_imu.append(float(row[vx_imu_idx]))
-                    self.vys_imu.append(float(row[vy_imu_idx]))
-                    self.axs_imu.append(float(row[ax_imu_idx]))
-                    self.ays_imu.append(float(row[ay_imu_idx]))
-                    self.azs_imu.append(float(row[az_imu_idx]))
+                    data_import_list.append(DataPoint(
+                        x = float(row[lat_idx]), 
+                        y = float(row[lon_idx]),
+                        s = math.sqrt(float(row[vx_imu_idx])*float(row[vx_imu_idx])+float(row[vy_imu_idx])*float(row[vy_imu_idx])),
+                        a = math.sqrt(float(row[ax_w_idx])*float(row[ax_w_idx])+float(row[ay_w_idx])*float(row[ay_w_idx])),
+                        t = int(row[time_idx])
+                        ))
                 except (ValueError, IndexError):
                     continue  # skip bad rows
 
-        #remove values from before the GPS inits
-        new_lats = []
-        new_lons = []
-        new_vxs_imu = []
-        new_vys_imu = []
-        new_times = []
-        new_ax_imu = []
-        new_ay_imu = []
-        new_az_imu = []
-        self.rows_skiped = 0
+            #remove values from before the GPS inits
+            self.rows_skiped = 0
 
-        for lat, lon, vx_imu, vy_imu, time, ax_imu, ay_imu, az_imu in zip(self.lats, self.lons, self.vxs_imu, self.vys_imu, self.times, self.axs_imu, self.ays_imu, self.azs_imu):
-            if lat != 0 and lon != 0:
-                new_lats.append(lat)
-                new_lons.append(lon)
-                new_vxs_imu.append(vx_imu)
-                new_vys_imu.append(vy_imu)
-                new_ax_imu.append(ax_imu)
-                new_ay_imu.append(ay_imu)
-                new_az_imu.append(az_imu)
-                new_times.append(time)
-                self.rows_skiped += 1
+            for d in data_import_list:
+                if d.latitude != 0 and d.longitude != 0:
+                    self.data.append(d)
+                else: self.rows_skiped += 1
 
-        self.lats = new_lats
-        self.lons = new_lons
-        self.vxs_imu = new_vxs_imu
-        self.vys_imu = new_vys_imu
-        self.ax_imu = new_ax_imu
-        self.ay_imu = new_ay_imu
-        self.az_imu = new_az_imu
-        self.times = new_times
-
-        self.lat_offset = self.lats[0]
-        self.lon_offset = self.lons[0]
-        self.vx_imu = self.vxs_imu[0]
-        self.vy_imu = self.vys_imu[0]
-        self.time_offset = self.times[0]
-
-        self.main_window.text_console.log_message(
-            f"Loaded {len(self.lats)} GPS points (lat, lon)\n Loaded {len(self.vxs_imu)} IMU velocity points (vx_imu, vy_imu)\n Loaded {len(self.ax_imu)} IMU acceleration points (ax_imu, ay_imu, az_imu)\n skipped {self.rows_skiped} rows with no GPS lock"
-        )
-
-    #used by the acceleration chart to get the current time for the x axis
-    def get_time(self):
-        if self.playback_index < len(self.times):
-            return self.times[self.playback_index] - self.time_offset
-        elif(self.playback_index != 0):
-            return self.times[-1] - self.time_offset
-        else:
-            return 0
+            self.main_window.text_console.log_message(
+                f"Loaded {len(self.data)} Data Points. Skipped {self.rows_skiped} rows."
+            )
