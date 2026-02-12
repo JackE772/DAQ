@@ -8,6 +8,7 @@ class GPSWidget(QWidget):
     rows_skiped = 0
     playback = False
     output_speed = Signal(float)
+    output_acceleration = Signal(tuple) #tuple of (ax, ay, az) in m/s^2
 
     def __init__(self, main_window):
         super().__init__()
@@ -48,6 +49,9 @@ class GPSWidget(QWidget):
         #imu data
         self.vxs_imu = []
         self.vys_imu = []
+        self.axs_imu = []
+        self.ays_imu = []
+        self.azs_imu = []
 
         # GPS data
         self.lats = []
@@ -204,6 +208,14 @@ class GPSWidget(QWidget):
         t = (speed - self.min_speed) / (self.max_speed - self.min_speed)
         return int(t * (self.num_buckets - 1))
 
+    def get_time(self):
+        if self.playback_index < len(self.times):
+            return self.times[self.playback_index] - self.time_offset
+        elif(self.playback_index != 0):
+            return self.times[-1] - self.time_offset
+        else:
+            return 0
+
     def latlon_to_point(self, lat, lon):
          # Earth radius approximation
         meters_per_deg_lat = 111_320
@@ -249,6 +261,7 @@ class GPSWidget(QWidget):
 
         if(speed > 0):
             self.output_speed.emit(speed)
+            self.output_acceleration.emit((self.ax_imu[self.playback_index], self.ay_imu[self.playback_index], self.az_imu[self.playback_index]))
         bucket = self.speed_to_bucket(speed)
 
         # add segment to correct bucket path
@@ -307,6 +320,9 @@ class GPSWidget(QWidget):
                 time_key = next(k for k in header_map if "millis" in k)
                 vx_imu_key = next(k for k in header_map if "vx_imu" in k)
                 vy_imu_key = next(k for k in header_map if "vy_imu" in k)
+                ax_imu_key = next(k for k in header_map if "ax_b" in k)
+                ay_imu_key = next(k for k in header_map if "ay_b" in k)
+                az_imu_key = next(k for k in header_map if "az_b" in k)
             except StopIteration:
                 self.main_window.text_console.log_message(
                     f"Loaded File does not have propper data labeling \n unable to load lon/lat data cols"
@@ -318,6 +334,9 @@ class GPSWidget(QWidget):
             time_idx = header_map[time_key]
             vx_imu_idx = header_map[vx_imu_key]
             vy_imu_idx = header_map[vy_imu_key]
+            ax_imu_idx = header_map[ax_imu_key]
+            ay_imu_idx = header_map[ay_imu_key]
+            az_imu_idx = header_map[az_imu_key]
 
             for row in reader:
                 try:
@@ -326,6 +345,9 @@ class GPSWidget(QWidget):
                     self.times.append(int(row[time_idx]))
                     self.vxs_imu.append(float(row[vx_imu_idx]))
                     self.vys_imu.append(float(row[vy_imu_idx]))
+                    self.axs_imu.append(float(row[ax_imu_idx]))
+                    self.ays_imu.append(float(row[ay_imu_idx]))
+                    self.azs_imu.append(float(row[az_imu_idx]))
                 except (ValueError, IndexError):
                     continue  # skip bad rows
 
@@ -335,14 +357,20 @@ class GPSWidget(QWidget):
         new_vxs_imu = []
         new_vys_imu = []
         new_times = []
+        new_ax_imu = []
+        new_ay_imu = []
+        new_az_imu = []
         self.rows_skiped = 0
 
-        for lat, lon, vx_imu, vy_imu, time in zip(self.lats, self.lons, self.vxs_imu, self.vys_imu, self.times):
+        for lat, lon, vx_imu, vy_imu, time, ax_imu, ay_imu, az_imu in zip(self.lats, self.lons, self.vxs_imu, self.vys_imu, self.times, self.axs_imu, self.ays_imu, self.azs_imu):
             if lat != 0 and lon != 0:
                 new_lats.append(lat)
                 new_lons.append(lon)
                 new_vxs_imu.append(vx_imu)
                 new_vys_imu.append(vy_imu)
+                new_ax_imu.append(ax_imu)
+                new_ay_imu.append(ay_imu)
+                new_az_imu.append(az_imu)
                 new_times.append(time)
                 self.rows_skiped += 1
 
@@ -350,6 +378,9 @@ class GPSWidget(QWidget):
         self.lons = new_lons
         self.vxs_imu = new_vxs_imu
         self.vys_imu = new_vys_imu
+        self.ax_imu = new_ax_imu
+        self.ay_imu = new_ay_imu
+        self.az_imu = new_az_imu
         self.times = new_times
 
         self.lat_offset = self.lats[0]
@@ -359,5 +390,14 @@ class GPSWidget(QWidget):
         self.time_offset = self.times[0]
 
         self.main_window.text_console.log_message(
-            f"Loaded {len(self.lats)} GPS points (lat, lon)\n Loaded {len(self.vxs_imu)} IMU velocity points (vx_imu, vy_imu)\n skipped {self.rows_skiped} rows with no GPS lock"
+            f"Loaded {len(self.lats)} GPS points (lat, lon)\n Loaded {len(self.vxs_imu)} IMU velocity points (vx_imu, vy_imu)\n Loaded {len(self.ax_imu)} IMU acceleration points (ax_imu, ay_imu, az_imu)\n skipped {self.rows_skiped} rows with no GPS lock"
         )
+
+    #used by the acceleration chart to get the current time for the x axis
+    def get_time(self):
+        if self.playback_index < len(self.times):
+            return self.times[self.playback_index] - self.time_offset
+        elif(self.playback_index != 0):
+            return self.times[-1] - self.time_offset
+        else:
+            return 0

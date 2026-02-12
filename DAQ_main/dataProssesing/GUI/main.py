@@ -9,6 +9,7 @@ from GPSDisplay import GPSWidget
 from console import ConsoleWindow
 from ble_getter import DataGetter
 from speedometer import SpeedometerWidget
+from acceleration_chart import AccelerationChart
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import QApplication, QMainWindow, QHBoxLayout, QWidget, QPushButton, QVBoxLayout, QSplitter
 from qasync import QEventLoop, asyncSlot
@@ -92,6 +93,10 @@ class MainWindow(QMainWindow):
         rightSideSlider = QSplitter(Qt.Vertical)
         self.speedometer = SpeedometerWidget(self.GPSDisplay, main_window=self)
         rightSideSlider.addWidget(self.speedometer)
+
+        self.acceleration_chart = AccelerationChart(self.GPSDisplay)
+        self.GPSDisplay.output_acceleration.connect(self.acceleration_chart.add_acceleration)
+        rightSideSlider.addWidget(self.acceleration_chart)
         splitter.addWidget(rightSideSlider)
 
     def handle_type_selected(self, mode):
