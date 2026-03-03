@@ -55,7 +55,7 @@ class MainWindow(QMainWindow):
 
         self.sidebar = Sidebar()
         self.sidebar.setMinimumWidth(100)
-        self.sidebar.setMaximumWidth(600)
+        self.sidebar.setMaximumWidth(300)
         splitter.addWidget(self.sidebar)
 
         #self.speedometer = SpeedometerWidget()
@@ -85,6 +85,9 @@ class MainWindow(QMainWindow):
         console_layout = QVBoxLayout(console_widget)
         self.text_console = ConsoleWindow()
         console_layout.addWidget(self.text_console)
+        console_widget.setFixedHeight(500)
+        console_widget.setMinimumHeight(100)
+        console_widget.setMaximumHeight(300)
 
         middleSpliter.addWidget(content)
         middleSpliter.addWidget(console_widget)
@@ -92,6 +95,7 @@ class MainWindow(QMainWindow):
 
         rightSideSlider = QSplitter(Qt.Vertical)
         self.speedometer = SpeedometerWidget(self.GPSDisplay, main_window=self)
+        rightSideSlider.setFixedWidth(350)
         rightSideSlider.addWidget(self.speedometer)
 
         self.acceleration_chart = AccelerationChart(self.GPSDisplay)

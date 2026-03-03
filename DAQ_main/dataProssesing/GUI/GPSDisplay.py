@@ -45,8 +45,8 @@ class GPSWidget(QWidget):
         self.paths = [QPainterPath() for _ in range(self.num_buckets)]
         self.bucket_colors = [
             QColor(
-                int(255 * (i / (self.num_buckets - 1))),          # R
-                int(255 * (1 - i / (self.num_buckets - 1))),      # G
+                int(255 * (1 - i / (self.num_buckets - 1))),       # R
+                0,                                                 # G
                 0                                                  # B
             )
             for i in range(self.num_buckets)
@@ -61,6 +61,8 @@ class GPSWidget(QWidget):
         self.scale = 10  # pixels per meter
 
         self.data: list[DataPoint] = list()
+        self.lat_offset = 0
+        self.lon_offset = 0
 
         #coloring the line
         self.speeds = []
@@ -210,17 +212,18 @@ class GPSWidget(QWidget):
         return int(t * (self.num_buckets - 1))
 
     def get_time(self):
-        if self.playback_index < len(self.times):
-            return self.times[self.playback_index] - self.time_offset
-        elif(self.playback_index != 0):
-            return self.times[-1] - self.time_offset
+        if self.playback_index < len(self.data):
+            return self.data[self.playback_index].time
         else:
             return 0
 
     def latlon_to_point(self, lat, lon):
-        x = (lon) * 111_320
-        y = -(lat) * 111_320
+        # Earth radius approximation
+        meters_per_deg_lat = 111_320
+        meters_per_deg_lon = 111_320 * math.cos(math.radians(self.lat_offset))
 
+        x = (lon - self.lon_offset) * meters_per_deg_lon
+        y = -(lat - self.lat_offset) * meters_per_deg_lat
         return QPointF(x * self.scale, y * self.scale)
 
     def playback_step(self):
@@ -236,12 +239,12 @@ class GPSWidget(QWidget):
         point = self.latlon_to_point(latitude, longitude)
         
         self.main_window.text_console.log_message(
-            f"playback status {point}"
+            f"point LAT:{latitude} LON:{longitude}"
         )
 
         if(speed > 0):
             self.output_speed.emit(speed)
-            self.output_acceleration.emit((self.ax_imu[self.playback_index], self.ay_imu[self.playback_index], self.az_imu[self.playback_index]))
+            self.output_acceleration.emit(acceleration)
         bucket = self.speed_to_bucket(speed)
 
         # add segment to correct bucket path
@@ -333,6 +336,9 @@ class GPSWidget(QWidget):
                 if d.latitude != 0 and d.longitude != 0:
                     self.data.append(d)
                 else: self.rows_skiped += 1
+                
+            self.lat_offset = self.data[0].latitude
+            self.lon_offset = self.data[0].longitude
 
             self.main_window.text_console.log_message(
                 f"Loaded {len(self.data)} Data Points. Skipped {self.rows_skiped} rows."
