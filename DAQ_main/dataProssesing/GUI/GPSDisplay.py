@@ -10,7 +10,7 @@ class DataPoint():
     acceleration = 0
     speed = 0
     time = 0
-    
+
     def __init__(self, x, y, s, a, t):
         self.latitude = x
         self.longitude = y
@@ -22,7 +22,7 @@ class GPSWidget(QWidget):
     rows_skiped = 0
     playback = False
     output_speed = Signal(float)
-    output_acceleration = Signal(tuple) #tuple of (ax, ay, az) in m/s^2
+    output_acceleration = Signal(float) #tuple of (ax, ay, az) in m/s^2
 
     def __init__(self, main_window):
         super().__init__()
@@ -234,14 +234,14 @@ class GPSWidget(QWidget):
         speed = self.data[self.playback_index].speed
 
         point = self.latlon_to_point(latitude, longitude)
-        
+
         self.main_window.text_console.log_message(
             f"playback status {point}"
         )
 
         if(speed > 0):
             self.output_speed.emit(speed)
-            self.output_acceleration.emit((self.ax_imu[self.playback_index], self.ay_imu[self.playback_index], self.az_imu[self.playback_index]))
+            self.output_acceleration.emit(acceleration)
         bucket = self.speed_to_bucket(speed)
 
         # add segment to correct bucket path
@@ -317,7 +317,7 @@ class GPSWidget(QWidget):
             for row in reader:
                 try:
                     data_import_list.append(DataPoint(
-                        x = float(row[lat_idx]), 
+                        x = float(row[lat_idx]),
                         y = float(row[lon_idx]),
                         s = math.sqrt(float(row[vx_imu_idx])*float(row[vx_imu_idx])+float(row[vy_imu_idx])*float(row[vy_imu_idx])),
                         a = math.sqrt(float(row[ax_w_idx])*float(row[ax_w_idx])+float(row[ay_w_idx])*float(row[ay_w_idx])),
@@ -337,3 +337,11 @@ class GPSWidget(QWidget):
             self.main_window.text_console.log_message(
                 f"Loaded {len(self.data)} Data Points. Skipped {self.rows_skiped} rows."
             )
+    #used in acceleration chart to get time value for each point so it can be mapped to the x axis
+    def get_time(self):
+        if self.playback_index < len(self.data):
+            return self.data[self.playback_index].time
+        elif(self.playback_index != 0):
+            return self.data[-1].time
+        else:
+            return 0
