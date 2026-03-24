@@ -14,6 +14,7 @@
 // =======================
 // ====== CONSTANTS ======
 // =======================
+SPIClass spi(FSPI);
 
 // ----- Custom SPI pins for SD card -----
 #define SD_SCK   39
@@ -29,6 +30,9 @@
 #define GPS_UUID            "d69584e5-5142-414f-a90e-07c271d18575"
 #define IMU_UUID            "d69584e5-5142-414f-a90e-07c271d18576"
 
+// address of the IMU on I2C
+#define IMU_ADDR 0x6A
+
 // ----- Physical constants -----
 const double DEG_2_RAD = 0.01745329251;
 const double EARTH_R   = 6371000.0;     // meters
@@ -37,8 +41,6 @@ const uint16_t BNO055_SAMPLERATE_DELAY_MS = 10;
 // ============================
 // ====== GLOBAL OBJECTS ======
 // ============================
-
-
 
 // IMU and GPS
 Adafruit_BNO055 bno = Adafruit_BNO055(55, 0x28);
@@ -93,6 +95,23 @@ int pot_1 = 0;
 int pot_2 = 0;
 String line, line2; // temporary string buffers for CSV output
 
+void writeRegister(uint8_t reg, uint8_t value) {
+  Wire.beginTransmission(IMU_ADDR);
+  Wire.write(reg);
+  Wire.write(value);
+  Wire.endTransmission();
+}
+
+int16_t read16(uint8_t reg) {
+  Wire.beginTransmission(IMU_ADDR);
+  Wire.write(reg);
+  Wire.endTransmission(false);
+  Wire.requestFrom(IMU_ADDR, 2);
+
+  int16_t value = Wire.read();
+  value |= (Wire.read() << 8);
+  return value;
+}
 
 void setup() {
   // logging data on the 9600 band
@@ -100,17 +119,16 @@ void setup() {
   // We are using a 9600 baud GPS DO NOT CHANGE THE MAGIC NUMBER
   MySerial.begin(9600, SERIAL_8N1, 18, 1);  // (pins unchanged)
 
-  SPIClass spi;
-  // Initialize custom SPI pins for SD card
-  spi.begin(SD_SCK, SD_MISO, SD_MOSI, SD_CS);  // SCK, MISO, MOSI, SS
+  spi.begin(SD_SCK, SD_MISO, SD_MOSI, SD_CS);
+
+  if (!SD.begin(SD_CS, spi, 4000000)) {
+      Serial.println("SD card initialization failed!");
+      while (1);
+  }
 
   delay(2000);//give serial time to init
 
-  if (!bno.begin()) //abort if IMU not detected
-  {
-    Serial.println("No BNO055 detected");
-    while (1);
-  }
+  //TODO IMU CHECKER GOES HERE
 
   if (!SD.begin(SD_CS, spi, 4000000)) {
     Serial.println("SD card initialization failed!");
@@ -239,9 +257,10 @@ void writeCSV(uint32_t now_ms) {
   String s;
   s.reserve(200);
 
-  s += String(euler.orientation.x, 6); s += ",";      // yaw
-  s += String(euler.orientation.y, 6); s += ",";      // roll
-  s += String(euler.orientation.z, 6); s += ",";      // pitch
+  //angle not output from new IMU still logging 0s so old analisis code can be used with current system
+  s += "0"; s += ",";      // yaw
+  s += "0"; s += ",";      // roll
+  s += "0"; s += ",";      // pitch
 
   s += String(lin.acceleration.x, 6); s += ",";       // ax_b
   s += String(lin.acceleration.y, 6); s += ",";       // ay_b
@@ -312,31 +331,33 @@ void writeCSV(uint32_t now_ms) {
   };
 
   if (imuChar) {
-    imuChar->setValue(imuOut);
-    gpsChar->notify();
+    imuChar->setValue((uint8_t*)imuOut, sizeof(imuOut));
+    imuChar->notify();
   }
 }
 
 void updateIMU(double dt) {
-  sensors_event_t euler, lin;
-  bno.getEvent(&euler, Adafruit_BNO055::VECTOR_EULER);         // x=head(yaw), y=roll, z=pitch (deg)
-  bno.getEvent(&lin,   Adafruit_BNO055::VECTOR_LINEARACCEL);   // body-frame, gravity removed (m/s^2)
+  //sensors_event_t euler, lin;
+  //bno.getEvent(&euler, Adafruit_BNO055::VECTOR_EULER);         // x=head(yaw), y=roll, z=pitch (deg)
+  //bno.getEvent(&lin,   Adafruit_BNO055::VECTOR_LINEARACCEL);   // body-frame, gravity removed (m/s^2)
 
-  double yaw = euler.orientation.x * DEG_2_RAD;
+  //double yaw = euler.orientation.x * DEG_2_RAD;
 
   // Body -> world (flat car): rotate by yaw around Z
-  double ax_b = lin.acceleration.x;
-  double ay_b = lin.acceleration.y;
-  double az_b = lin.acceleration.z;
+  double ax_b = read16(0x28);  // OUTX_L_A;
+  double ay_b = read16(0x2A);
+  double az_b = read16(0x2C);
 
-  ax_w =  ax_b * cos(yaw) - ay_b * sin(yaw);
-  ay_w =  ax_b * sin(yaw) + ay_b * cos(yaw);
+  //ax_w =  ax_b * cos(yaw) - ay_b * sin(yaw);
+  //ay_w =  ax_b * sin(yaw) + ay_b * cos(yaw);
 
   // Integrate velocity and position (IMU-propagated, world frame)
+  ay_w = ay_b;
+  ax_w = ax_b;
   vx += ax_w * dt;
   vy += ay_w * dt;
-  xPos += vx * dt + 0.5 * ax_w * dt * dt;
-  yPos += vy * dt + 0.5 * ay_w * dt * dt;
+  xPos += vx * dt + 0.5 * ax_b * dt * dt;
+  yPos += vy * dt + 0.5 * ay_b * dt * dt;
 }
 
 bool gpsHasFreshFix(uint32_t &age_ms) {
