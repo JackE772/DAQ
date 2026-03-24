@@ -13,14 +13,14 @@ class Sidebar(QWidget):
         self.setFixedWidth(400)  # sidebar width
         self.setStyleSheet("""
             QPushButton {
-                background-color: #3B4252;
+                background-color: #7a0b0b;
                 border: none;
                 padding: 8px;
                 margin: 4px;
                 border-radius: 6px;
             }
             QPushButton:hover {
-                background-color: #4C566A;
+                background-color: #9a2b2b;
             }
         """)
 
