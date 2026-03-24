@@ -11,18 +11,18 @@ class AccelerationChart(QWidget):
         self.end_time = 0
         self.max_height = 90 #%
         self.vert_boarder = 10 #px
+        self.horizontal_boarder = 10 #px
         #calc inital height and width
-        self.width = self.width()
-        self.height = self.height()*self.max_height/100 - 2 * self.vert_boarder
+        self.element_width = self.width() - 2 * self.horizontal_boarder
+        self.element_height = self.height()*self.max_height/100 - 2 * self.vert_boarder
         self.update()  # trigger initial paint
 
     def add_acceleration(self, acceleration):
         if(self.start_time == -1):
             self.start_time = self.GPS.get_time()  # get initial time from GPS
         time = self.GPS.get_time()  # get current time from GPS
-        accel_mag = (acceleration[0]**2 + acceleration[1]**2 + acceleration[2]**2)**0.5
         self.acceleration_data.append((time, acceleration))
-        self.max_acceleration = max(self.max_acceleration, accel_mag)
+        self.max_acceleration = max(self.max_acceleration, acceleration)
         self.end_time = time
         self.update()  # trigger repaint to show new data
 
@@ -51,22 +51,20 @@ class AccelerationChart(QWidget):
             p.setPen(pen)
 
             #draw out all points in acceleration data
-            last_point = (0, self.height + self.vert_boarder)  # start at bottom left
+            last_point = (self.horizontal_boarder + 1, self.element_height - self.vert_boarder)  # start at bottom left
             for time, acceleration in self.acceleration_data:
-                mag = (acceleration[0]**2 + acceleration[1]**2 + acceleration[2]**2) ** 0.5
-
-                x = self.map(time, self.start_time, self.end_time, 0, self.width)
-                y = self.map(mag, 0, self.max_acceleration, self.height + self.vert_boarder, self.vert_boarder)
+                x = self.map(time, self.start_time, self.end_time, self.horizontal_boarder, self.element_width - self.horizontal_boarder)
+                y = self.map(acceleration, 0, self.max_acceleration, self.element_height - self.vert_boarder, self.vert_boarder)
 
                 p.drawLine(int(last_point[0]), int(last_point[1]), int(x), int(y))
                 last_point = (x, y)
-            #self.draw_axis(p)
+            self.draw_axis(p)
         finally:
             p.end()
 
     def resizeEvent(self, event):
-        self.width = self.width()
-        self.height = self.height()*self.max_height/100 - 2 * self.vert_boarder
+        self.element_width = self.width()
+        self.element_height = self.height()*self.max_height/100 - 2 * self.vert_boarder
         self.update()  # trigger repaint on resize
 
     def draw_axis(self, p):
@@ -76,6 +74,10 @@ class AccelerationChart(QWidget):
         p.setPen(pen)
 
         #y axis
-        p.drawLine(self.vert_boarder, self.vert_boarder, self.vert_boarder, self.height + self.vert_boarder)
+        p.drawLine(self.vert_boarder, self.vert_boarder, self.vert_boarder, self.element_height + self.vert_boarder)
         #x axis
-        p.drawLine(self.vert_boarder, self.height + self.vert_boarder, self.width + self.vert_boarder, self.height + self.vert_boarder)
+        p.drawLine(self.vert_boarder, self.element_height + self.vert_boarder, self.element_width + self.vert_boarder, self.element_height + self.vert_boarder)
+
+        #axis labels
+        p.drawText(self.vert_boarder + 5, self.vert_boarder + 15, f"Max Accel: {self.max_acceleration:.2f} m/s²")
+        p.drawText(self.element_width - 100, self.element_height + self.vert_boarder - 5, f"Time {self.end_time/1000:.2f} (s)")
