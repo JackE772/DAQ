@@ -3,6 +3,7 @@ from PySide6.QtGui import QPainter, QPen, QColor, QPixmap, QPainterPath
 from PySide6.QtCore import Qt, QPointF, QTimer, Signal
 import csv
 import math
+import time
 
 class DataPoint():
     latitude = 0
@@ -75,6 +76,7 @@ class GPSWidget(QWidget):
         self.points = []
         self.playback_index = 0
         self.ms_per_point = 100
+        self.live_start_time_s = None
         #only show one update in 50 becuase the GPS updates slower than the adafruit polls
         #this should not lose any data and be much easier to work with
         self.playback_step_size = 50
@@ -83,6 +85,12 @@ class GPSWidget(QWidget):
         self.timer.timeout.connect(self.playback_step)
         self.update_grid_cache()
         self.update()
+
+    def configure_for_live_mode(self):
+        self.playback_step_size = 1
+        self.ms_per_point = 50
+        if self.playback_index >= len(self.data):
+            self.playback_index = max(0, len(self.data) - 1)
 
     def paintEvent(self, event):
         p = QPainter(self)
@@ -238,10 +246,6 @@ class GPSWidget(QWidget):
 
         point = self.latlon_to_point(latitude, longitude)
 
-        self.main_window.text_console.log_message(
-            f"point LAT:{latitude} LON:{longitude}"
-        )
-
         if(speed > 0):
             self.output_speed.emit(speed)
             self.output_acceleration.emit(acceleration)
@@ -259,9 +263,6 @@ class GPSWidget(QWidget):
         self.update()
 
     def set_playback_status(self, status):
-        self.main_window.text_console.log_message(
-            f"playback status {status}"
-        )
         self.playback = status
 
         if status:
@@ -347,3 +348,34 @@ class GPSWidget(QWidget):
                 Max Acceleration: {max(self.data, key=lambda x: x.acceleration).acceleration:.2f} m/s²
                 """
             )
+            
+    def load_data_point(self, point):
+        try:
+            # Prefer GPS coordinates for map placement, fallback to IMU-propagated x/y.
+            if "lat" in point and "lon" in point:
+                x = float(point["lat"])
+                y = float(point["lon"])
+            else:
+                x = float(point["x"])
+                y = float(point["y"])
+
+            speed = math.sqrt(float(point["vx"]) * float(point["vx"]) + float(point["vy"]) * float(point["vy"]))
+            acceleration = math.sqrt(float(point["ax_w"]) * float(point["ax_w"]) + float(point["ay_w"]) * float(point["ay_w"]))
+
+            if self.live_start_time_s is None:
+                self.live_start_time_s = time.monotonic()
+            elapsed_ms = int((time.monotonic() - self.live_start_time_s) * 1000)
+
+            if len(self.data) == 0:
+                self.lat_offset = x
+                self.lon_offset = y
+
+            self.data.append(DataPoint(
+                x=x,
+                y=y,
+                s=speed,
+                a=acceleration,
+                t=elapsed_ms
+            ))
+        except (KeyError, TypeError, ValueError):
+            self.main_window.text_console.log_message("Skipped invalid live data point")
