@@ -15,8 +15,9 @@ class AccelerationChart(QWidget):
         self.left_margin = 45 #px for Y-axis labels
         self.bottom_margin = 20 #px for X-axis labels
         #calc inital height and width
-        self.width = self.width()
-        self.height = self.height()*self.max_height/100 - 2 * self.vert_boarder
+        self.horizontal_boarder = 10 #px
+        self.element_width = self.width() - 2 * self.horizontal_boarder
+        self.element_height = self.height()*self.max_height/100 - 2 * self.vert_boarder
         self.update()  # trigger initial paint
 
     def add_acceleration(self, acceleration):
@@ -133,6 +134,10 @@ class AccelerationChart(QWidget):
         p.setPen(pen)
 
         #y axis
-        p.drawLine(self.vert_boarder, self.vert_boarder, self.vert_boarder, self.height + self.vert_boarder)
+        p.drawLine(self.vert_boarder, self.vert_boarder, self.vert_boarder, self.element_height + self.vert_boarder)
         #x axis
-        p.drawLine(self.vert_boarder, self.height + self.vert_boarder, self.width + self.vert_boarder, self.height + self.vert_boarder)
+        p.drawLine(self.vert_boarder, self.element_height + self.vert_boarder, self.element_width + self.vert_boarder, self.element_height + self.vert_boarder)
+
+        #axis labels
+        p.drawText(self.vert_boarder + 5, self.vert_boarder + 15, f"Max Accel: {self.max_acceleration:.2f} m/s²")
+        p.drawText(self.element_width - 100, self.element_height + self.vert_boarder - 5, f"Time {self.end_time/1000:.2f} (s)")

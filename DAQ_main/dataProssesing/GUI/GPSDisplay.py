@@ -10,7 +10,7 @@ class DataPoint():
     acceleration = 0
     speed = 0
     time = 0
-    
+
     def __init__(self, x, y, s, a, t):
         self.latitude = x
         self.longitude = y
@@ -22,7 +22,7 @@ class GPSWidget(QWidget):
     rows_skiped = 0
     playback = False
     output_speed = Signal(float)
-    output_acceleration = Signal(tuple) #tuple of (ax, ay, az) in m/s^2
+    output_acceleration = Signal(float) #tuple of (ax, ay, az) in m/s^2
 
     def __init__(self, main_window):
         super().__init__()
@@ -237,7 +237,7 @@ class GPSWidget(QWidget):
         speed = self.data[self.playback_index].speed
 
         point = self.latlon_to_point(latitude, longitude)
-        
+
         self.main_window.text_console.log_message(
             f"point LAT:{latitude} LON:{longitude}"
         )
@@ -320,7 +320,7 @@ class GPSWidget(QWidget):
             for row in reader:
                 try:
                     data_import_list.append(DataPoint(
-                        x = float(row[lat_idx]), 
+                        x = float(row[lat_idx]),
                         y = float(row[lon_idx]),
                         s = math.sqrt(float(row[vx_imu_idx])*float(row[vx_imu_idx])+float(row[vy_imu_idx])*float(row[vy_imu_idx])),
                         a = math.sqrt(float(row[ax_w_idx])*float(row[ax_w_idx])+float(row[ay_w_idx])*float(row[ay_w_idx])),
