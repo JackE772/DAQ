@@ -65,4 +65,4 @@ class SpeedometerWidget(QWidget):
         # text
         painter.setPen(Qt.white)
         painter.setFont(self.font())
-        painter.drawText(self.rect(), Qt.AlignCenter, f"{int(self.speed)} m/h")
+        painter.drawText(self.rect(), Qt.AlignCenter, f"{int(self.speed)} m/s")

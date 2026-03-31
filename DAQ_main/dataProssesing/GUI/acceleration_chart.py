@@ -100,7 +100,7 @@ class AccelerationChart(QWidget):
         p.save()
         p.translate(12, chart_top + chart_height / 2)
         p.rotate(-90)
-        p.drawText(0, 0, "m/h²")
+        p.drawText(0, 0, "m/s²")
         p.restore()
         
         # Draw X-axis labels (time since now, labeled in reverse)

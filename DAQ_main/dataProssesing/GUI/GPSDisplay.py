@@ -341,5 +341,9 @@ class GPSWidget(QWidget):
             self.lon_offset = self.data[0].longitude
 
             self.main_window.text_console.log_message(
-                f"Loaded {len(self.data)} Data Points. Skipped {self.rows_skiped} rows."
+                f"""
+                Loaded {len(self.data)} Data Points. Skipped {self.rows_skiped} rows.\n
+                Max Speed: {max(self.data, key=lambda x: x.speed).speed:.2f} m/s\n
+                Max Acceleration: {max(self.data, key=lambda x: x.acceleration).acceleration:.2f} m/s²
+                """
             )
