@@ -121,36 +121,196 @@ def emit_GPS_pos_from_file(window):
     window.gps_updated.emit(window.loaded_file_path)
 
 async def async_update_GPS_pos(window):
-    window.text_console.log_message("seting up GPS data loging from file")
+    window.text_console.log_message("File loader task started. Waiting for File mode.", level="INFO")
 
     while True:
+        if window.sourceType != "File":
+            await asyncio.sleep(0.5)
+            continue
+
         await asyncio.sleep(0.5)
         if(window.loaded_file_path != None):
-            window.text_console.log_message(f"loading GPS position from {window.loaded_file_path}")
+            window.text_console.log_message(
+                f"File selected. Loading GPS data from {window.loaded_file_path}",
+                level="SUCCESS"
+            )
             break
 
     emit_GPS_pos_from_file(window)
 
 async def async_ble_loop(window):
     data_getter = DataGetter()
-    connected = await data_getter.connect(logger=window.text_console)
-    window.text_console.log_message("seting up BLE data streaming")
-
-    if not connected:
-        window.text_console.log_message("Failed to connect BLE")
-        return
+    window.text_console.log_message("BLE loop started. Waiting for Bluetooth mode.", level="INFO")
+    reconnect_delay_seconds = 2.0
+    live_playback_started = False
+    last_mode = None
+    prev_gps_sample = None
+    prev_gps_velocity = None
 
     try:
         while True:
-            gps_data = await data_getter.read_gps_status()
-            imu_data = await data_getter.read_imu_data()
+            try:
+                if window.sourceType != last_mode:
+                    if window.sourceType == "Bluetooth":
+                        window.text_console.log_message("Bluetooth mode active. Preparing live stream.", level="INFO")
+                    elif window.sourceType == "File":
+                        window.text_console.log_message("File mode active. BLE polling paused.", level="WARN")
+                    else:
+                        window.text_console.log_message(
+                            f"{window.sourceType} mode active. BLE polling paused.",
+                            level="WARN"
+                        )
+                    last_mode = window.sourceType
 
-            window.text_console.log_message(f"GPS Data: {gps_data}")
-            window.text_console.log_message(f"IMU Data: {imu_data}")
+                if window.sourceType != "Bluetooth":
+                    live_playback_started = False
+                    prev_gps_sample = None
+                    prev_gps_velocity = None
+                    if data_getter.is_connected():
+                        window.text_console.log_message(
+                            "Bluetooth mode disabled. Disconnecting BLE client.",
+                            level="WARN"
+                        )
+                        await data_getter.disconnect(logger=window.text_console)
+                    await asyncio.sleep(0.5)
+                    continue
 
-            speed = math.sqrt(gps_data["vx"]**2 + gps_data["vy"]**2)
+                if not data_getter.is_connected():
+                    window.text_console.log_message("BLE disconnected. Attempting to connect...", level="WARN")
+                    connected = await data_getter.connect(logger=window.text_console)
+                    if not connected:
+                        window.text_console.log_message(
+                            f"BLE target unavailable. Retrying connection in {reconnect_delay_seconds:.1f}s",
+                            level="WARN"
+                        )
+                        await asyncio.sleep(reconnect_delay_seconds)
+                        continue
+                    window.text_console.log_message("BLE connected. Starting live playback.", level="SUCCESS")
+                    if not live_playback_started:
+                        window.GPSDisplay.configure_for_live_mode()
+                        window.start_playback()
+                        live_playback_started = True
 
-            window.GPSDisplay.speedometer.set_speed(speed)
+                gps_data = await data_getter.read_gps_status()
+                imu_data = await data_getter.read_imu_data()
+                now_s = asyncio.get_running_loop().time()
+
+                if imu_data is not None:
+                    speed = math.sqrt(imu_data["vx"]**2 + imu_data["vy"]**2)
+                    gps_state = "available" if gps_data is not None else "unavailable"
+                    window.text_console.log_message(
+                        f"BLE poll complete. GPS {gps_state}. Speed {speed:.2f} m/s",
+                        level="DEBUG"
+                    )
+
+                    live_point = dict(imu_data)
+                    if gps_data is not None:
+                        live_point["lat"] = gps_data["lat"]
+                        live_point["lon"] = gps_data["lon"]
+                        prev_gps_sample = {
+                            "lat": gps_data["lat"],
+                            "lon": gps_data["lon"],
+                            "t": now_s,
+                        }
+                        prev_gps_velocity = {
+                            "vx": imu_data["vx"],
+                            "vy": imu_data["vy"],
+                        }
+                    window.GPSDisplay.load_data_point(live_point)
+                    if live_playback_started:
+                        window.start_playback()
+                else:
+                    if gps_data is not None and prev_gps_sample is not None:
+                        dt = now_s - prev_gps_sample["t"]
+                        if dt > 0:
+                            lat = gps_data["lat"]
+                            lon = gps_data["lon"]
+                            prev_lat = prev_gps_sample["lat"]
+                            prev_lon = prev_gps_sample["lon"]
+
+                            meters_per_deg_lat = 111_320.0
+                            meters_per_deg_lon = 111_320.0 * math.cos(math.radians((lat + prev_lat) / 2.0))
+
+                            dx = (lon - prev_lon) * meters_per_deg_lon
+                            dy = (lat - prev_lat) * meters_per_deg_lat
+                            vx = dx / dt
+                            vy = dy / dt
+
+                            if prev_gps_velocity is None:
+                                ax_w = 0.0
+                                ay_w = 0.0
+                            else:
+                                ax_w = (vx - prev_gps_velocity["vx"]) / dt
+                                ay_w = (vy - prev_gps_velocity["vy"]) / dt
+
+                            live_point = {
+                                "vx": vx,
+                                "vy": vy,
+                                "ax_w": ax_w,
+                                "ay_w": ay_w,
+                                "x": 0.0,
+                                "y": 0.0,
+                                "lat": lat,
+                                "lon": lon,
+                            }
+                            window.GPSDisplay.load_data_point(live_point)
+                            if live_playback_started:
+                                window.start_playback()
+
+                            gps_speed = math.sqrt(vx**2 + vy**2)
+                            window.text_console.log_message(
+                                f"IMU unavailable. Using GPS-estimated motion. Speed {gps_speed:.2f} m/s",
+                                level="WARN"
+                            )
+
+                            prev_gps_velocity = {
+                                "vx": vx,
+                                "vy": vy,
+                            }
+                            prev_gps_sample = {
+                                "lat": lat,
+                                "lon": lon,
+                                "t": now_s,
+                            }
+                        else:
+                            window.text_console.log_message(
+                                "IMU unavailable. GPS fallback skipped due to invalid dt.",
+                                level="WARN"
+                            )
+                    elif gps_data is not None:
+                        prev_gps_sample = {
+                            "lat": gps_data["lat"],
+                            "lon": gps_data["lon"],
+                            "t": now_s,
+                        }
+                        prev_gps_velocity = None
+                        window.text_console.log_message(
+                            "IMU unavailable. Captured first GPS sample for fallback estimation.",
+                            level="WARN"
+                        )
+                    else:
+                        window.text_console.log_message(
+                            "BLE poll incomplete. IMU and GPS payload unavailable.",
+                            level="WARN"
+                        )
+                    
+                    
+                    
+                    
+            except asyncio.CancelledError:
+                raise
+            except Exception as exc:
+                window.text_console.log_message(f"BLE polling error: {exc}", level="ERROR")
+                await data_getter.disconnect(logger=window.text_console)
+                live_playback_started = False
+                prev_gps_sample = None
+                prev_gps_velocity = None
+                window.text_console.log_message(
+                    f"Connection lost. Reconnecting in {reconnect_delay_seconds:.1f}s",
+                    level="WARN"
+                )
+                await asyncio.sleep(reconnect_delay_seconds)
+                continue
 
             await asyncio.sleep(0.5)  # poll every 0.5 seconds
     finally:
