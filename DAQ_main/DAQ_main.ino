@@ -239,8 +239,48 @@ void loop() {
   updateIMU(dt);
   updateGPS(dt);
   fuseEstimates(dt);
-
+  //write CSV 
   writeCSV(now);
+}
+
+void send_BLE_data(){
+  // get lat-lon
+  float flat, flon; unsigned long age;
+  gps.f_get_position(&flat, &flon, &age);
+  if (flat == TinyGPS::GPS_INVALID_F_ANGLE) flat = 0.0;
+  if (flon == TinyGPS::GPS_INVALID_F_ANGLE) flon = 0.0;
+  // ---- BLE GPS fix flag via NimBLE ----
+  float gpsOut[2] = {flat, flon};
+  
+  if (gpsChar) {
+    gpsChar->setValue(gpsOut);
+    // Notify if you want push updates to the phone/app:
+    gpsChar->notify();
+  }
+
+  float imuOut[12] = {
+    euler.orientation.x,
+    euler.orientation.y,
+    euler.orientation.z,
+
+    lin.acceleration.x,
+    lin.acceleration.y,
+    lin.acceleration.z,
+
+    ax_w,
+    ay_w,
+
+    vx,
+    vy,
+
+    xPos,
+    yPos
+  };
+
+  if (imuChar) {
+    imuChar->setValue((uint8_t*)imuOut, sizeof(imuOut));
+    imuChar->notify();
+  }
 }
 
 void writeCSV(uint32_t now_ms) {
@@ -301,39 +341,6 @@ void writeCSV(uint32_t now_ms) {
   logfile.println(s);
 
   if (now_ms - last_flush > 1000) { logfile.flush(); last_flush = now_ms; }
-
-  // ---- BLE GPS fix flag via NimBLE ----
-  float gpsOut[2] = {flat, flon};
-  
-  if (gpsChar) {
-    gpsChar->setValue(gpsOut);
-    // Notify if you want push updates to the phone/app:
-    gpsChar->notify();
-  }
-
-  float imuOut[12] = {
-    euler.orientation.x,
-    euler.orientation.y,
-    euler.orientation.z,
-
-    lin.acceleration.x,
-    lin.acceleration.y,
-    lin.acceleration.z,
-
-    ax_w,
-    ay_w,
-
-    vx,
-    vy,
-
-    xPos,
-    yPos
-  };
-
-  if (imuChar) {
-    imuChar->setValue((uint8_t*)imuOut, sizeof(imuOut));
-    imuChar->notify();
-  }
 }
 
 void updateIMU(double dt) {
@@ -344,9 +351,9 @@ void updateIMU(double dt) {
   //double yaw = euler.orientation.x * DEG_2_RAD;
 
   // Body -> world (flat car): rotate by yaw around Z
-  double ax_b = read16(0x28);  // OUTX_L_A;
-  double ay_b = read16(0x2A);
-  double az_b = read16(0x2C);
+  double ax_b = 0;//read16(0x28);  // OUTX_L_A;
+  double ay_b = 0;//read16(0x2A);
+  double az_b = 0;//read16(0x2C);
 
   //ax_w =  ax_b * cos(yaw) - ay_b * sin(yaw);
   //ay_w =  ax_b * sin(yaw) + ay_b * cos(yaw);
