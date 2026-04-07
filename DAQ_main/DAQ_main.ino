@@ -46,6 +46,8 @@ const uint16_t BNO055_SAMPLERATE_DELAY_MS = 10;
 Adafruit_BNO055 bno = Adafruit_BNO055(55, 0x28);
 HardwareSerial MySerial(2);  // UART2 for GPS (RX/TX pins defined later)
 TinyGPS gps;
+uint8_t bno_i2c_addr = 0x28;
+bool imu_available = false;
 
 // ---------- NimBLE objects (replaces ArduinoBLE) ----------
 NimBLEServer*         bleServer   = nullptr;
@@ -67,6 +69,12 @@ File logfile;
 double xPos = 0.0, yPos = 0.0;   // IMU-only position (world)
 double vx = 0.0, vy = 0.0;       // IMU-only velocity
 double ax_w = 0.0, ay_w = 0.0;   // accel in world frame
+double latest_yaw_deg = 0.0;
+double latest_roll_deg = 0.0;
+double latest_pitch_deg = 0.0;
+double latest_ax_b = 0.0;
+double latest_ay_b = 0.0;
+double latest_az_b = 0.0;
 
 // Fused estimate (IMU + GPS)
 double px_fused = 0.0, py_fused = 0.0;
@@ -82,10 +90,15 @@ double vx_gps = 0.0, vy_gps = 0.0;
 // Timing
 uint32_t last_ms = 0;
 uint32_t last_flush = 0;
+uint32_t last_imu_debug_ms = 0;
 
 // Fusion tuning (complementary filter)
 const double ALPHA_V = 0.2;   // GPS velocity weight
 const double BETA_P  = 0.02;  // GPS position weight
+
+// Simple drift controls for IMU integration
+const double IMU_ACCEL_DEADBAND = 0.05;   // m/s^2
+const double IMU_VELOCITY_FLOOR = 0.02;   // m/s
 
 // ============================
 // ====== OTHER GLOBALS =======
@@ -144,7 +157,25 @@ void setup() {
 
   // I2C speed & BNO external crystal (improves fusion quality)
   Wire.setClock(400000);
-  bno.setExtCrystalUse(true);
+
+  bool bno_ok = bno.begin();
+  if (!bno_ok) {
+    bno = Adafruit_BNO055(55, 0x29);
+    bno_ok = bno.begin();
+    if (bno_ok) {
+      bno_i2c_addr = 0x29;
+    }
+  }
+
+  imu_available = bno_ok;
+  if (imu_available) {
+    Serial.print("BNO055 initialized on I2C address 0x");
+    Serial.println(bno_i2c_addr, HEX);
+    delay(100);
+    bno.setExtCrystalUse(true);
+  } else {
+    Serial.println("BNO055 init failed on 0x28 and 0x29. Continuing without IMU so BLE remains available.");
+  }
 
   // Add a header if this is a new file
   if (logfile && logfile.size() == 0) {
@@ -239,6 +270,7 @@ void loop() {
   updateIMU(dt);
   updateGPS(dt);
   fuseEstimates(dt);
+  send_BLE_data();
   //write CSV 
   writeCSV(now);
 }
@@ -258,23 +290,21 @@ void send_BLE_data(){
     gpsChar->notify();
   }
 
+  // Keep BLE payload shape stable for GUI parser:
+  // yaw, roll, pitch, ax_b, ay_b, az_b, ax_w, ay_w, vx, vy, x, y
   float imuOut[12] = {
-    euler.orientation.x,
-    euler.orientation.y,
-    euler.orientation.z,
-
-    lin.acceleration.x,
-    lin.acceleration.y,
-    lin.acceleration.z,
-
-    ax_w,
-    ay_w,
-
-    vx,
-    vy,
-
-    xPos,
-    yPos
+    (float)latest_yaw_deg,
+    (float)latest_roll_deg,
+    (float)latest_pitch_deg,
+    (float)latest_ax_b,
+    (float)latest_ay_b,
+    (float)latest_az_b,
+    (float)ax_w,
+    (float)ay_w,
+    (float)vx,
+    (float)vy,
+    (float)xPos,
+    (float)yPos
   };
 
   if (imuChar) {
@@ -284,27 +314,23 @@ void send_BLE_data(){
 }
 
 void writeCSV(uint32_t now_ms) {
-  // Read fresh Euler & linear accel for logging snapshot (cheap)
-  sensors_event_t euler, lin;
-  bno.getEvent(&euler, Adafruit_BNO055::VECTOR_EULER);
-  bno.getEvent(&lin,   Adafruit_BNO055::VECTOR_LINEARACCEL);
-
   // Calibration levels
   uint8_t sys=0, g=0, a=0, m=0;
-  bno.getCalibration(&sys, &g, &a, &m);
+  if (imu_available) {
+    bno.getCalibration(&sys, &g, &a, &m);
+  }
 
   // Build line (you can keep String for now; swap to snprintf later if needed)
   String s;
   s.reserve(200);
 
-  //angle not output from new IMU still logging 0s so old analisis code can be used with current system
-  s += "0"; s += ",";      // yaw
-  s += "0"; s += ",";      // roll
-  s += "0"; s += ",";      // pitch
+  s += String(latest_yaw_deg, 6); s += ",";           // yaw
+  s += String(latest_roll_deg, 6); s += ",";          // roll
+  s += String(latest_pitch_deg, 6); s += ",";         // pitch
 
-  s += String(lin.acceleration.x, 6); s += ",";       // ax_b
-  s += String(lin.acceleration.y, 6); s += ",";       // ay_b
-  s += String(lin.acceleration.z, 6); s += ",";       // az_b
+  s += String(latest_ax_b, 6); s += ",";              // ax_b
+  s += String(latest_ay_b, 6); s += ",";              // ay_b
+  s += String(latest_az_b, 6); s += ",";              // az_b
 
   s += String(ax_w, 6); s += ",";                     // ax_w
   s += String(ay_w, 6); s += ",";                     // ay_w
@@ -344,27 +370,68 @@ void writeCSV(uint32_t now_ms) {
 }
 
 void updateIMU(double dt) {
-  //sensors_event_t euler, lin;
-  //bno.getEvent(&euler, Adafruit_BNO055::VECTOR_EULER);         // x=head(yaw), y=roll, z=pitch (deg)
-  //bno.getEvent(&lin,   Adafruit_BNO055::VECTOR_LINEARACCEL);   // body-frame, gravity removed (m/s^2)
+  if (!imu_available) {
+    latest_yaw_deg = 0.0;
+    latest_roll_deg = 0.0;
+    latest_pitch_deg = 0.0;
+    latest_ax_b = 0.0;
+    latest_ay_b = 0.0;
+    latest_az_b = 0.0;
+    ax_w = 0.0;
+    ay_w = 0.0;
+    vx = 0.0;
+    vy = 0.0;
+    return;
+  }
 
-  //double yaw = euler.orientation.x * DEG_2_RAD;
+  sensors_event_t euler, lin;
+  bno.getEvent(&euler, Adafruit_BNO055::VECTOR_EULER);         // x=head(yaw), y=roll, z=pitch (deg)
+  bno.getEvent(&lin,   Adafruit_BNO055::VECTOR_LINEARACCEL);   // body-frame, gravity removed (m/s^2)
+
+  latest_yaw_deg = euler.orientation.x;
+  latest_roll_deg = euler.orientation.y;
+  latest_pitch_deg = euler.orientation.z;
+
+  latest_ax_b = lin.acceleration.x;
+  latest_ay_b = lin.acceleration.y;
+  latest_az_b = lin.acceleration.z;
+
+  double yaw = latest_yaw_deg * DEG_2_RAD;
 
   // Body -> world (flat car): rotate by yaw around Z
-  double ax_b = 0;//read16(0x28);  // OUTX_L_A;
-  double ay_b = 0;//read16(0x2A);
-  double az_b = 0;//read16(0x2C);
+  double ax_b = latest_ax_b;
+  double ay_b = latest_ay_b;
 
-  //ax_w =  ax_b * cos(yaw) - ay_b * sin(yaw);
-  //ay_w =  ax_b * sin(yaw) + ay_b * cos(yaw);
+  ax_w =  ax_b * cos(yaw) - ay_b * sin(yaw);
+  ay_w =  ax_b * sin(yaw) + ay_b * cos(yaw);
 
-  // Integrate velocity and position (IMU-propagated, world frame)
-  ay_w = ay_b;
-  ax_w = ax_b;
+  // Deadband removes tiny bias/noise that otherwise integrates forever.
+  if (fabs(ax_w) < IMU_ACCEL_DEADBAND) ax_w = 0.0;
+  if (fabs(ay_w) < IMU_ACCEL_DEADBAND) ay_w = 0.0;
+
   vx += ax_w * dt;
   vy += ay_w * dt;
-  xPos += vx * dt + 0.5 * ax_b * dt * dt;
-  yPos += vy * dt + 0.5 * ay_b * dt * dt;
+
+  if (fabs(vx) < IMU_VELOCITY_FLOOR && fabs(ax_w) == 0.0) vx = 0.0;
+  if (fabs(vy) < IMU_VELOCITY_FLOOR && fabs(ay_w) == 0.0) vy = 0.0;
+
+  xPos += vx * dt + 0.5 * ax_w * dt * dt;
+  yPos += vy * dt + 0.5 * ay_w * dt * dt;
+
+  uint32_t now_ms = millis();
+  if (now_ms - last_imu_debug_ms >= 1000) {
+    last_imu_debug_ms = now_ms;
+    Serial.print("IMU dbg yaw="); Serial.print(latest_yaw_deg, 3);
+    Serial.print(" roll="); Serial.print(latest_roll_deg, 3);
+    Serial.print(" pitch="); Serial.print(latest_pitch_deg, 3);
+    Serial.print(" ax_b="); Serial.print(latest_ax_b, 3);
+    Serial.print(" ay_b="); Serial.print(latest_ay_b, 3);
+    Serial.print(" az_b="); Serial.print(latest_az_b, 3);
+    Serial.print(" ax_w="); Serial.print(ax_w, 3);
+    Serial.print(" ay_w="); Serial.print(ay_w, 3);
+    Serial.print(" vx="); Serial.print(vx, 3);
+    Serial.print(" vy="); Serial.println(vy, 3);
+  }
 }
 
 bool gpsHasFreshFix(uint32_t &age_ms) {

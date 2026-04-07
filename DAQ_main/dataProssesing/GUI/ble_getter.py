@@ -3,6 +3,7 @@ import struct
 from datetime import datetime
 from bleak import BleakScanner, BleakClient
 import sys
+import time
 
 class DataGetter:
     DEVICE_ADDRESS = "CAR_GO_VROOM"
@@ -13,6 +14,8 @@ class DataGetter:
 
     def __init__(self):
         self.client = None
+        self._last_short_gps_log_s = 0.0
+        self._last_short_imu_log_s = 0.0
 
     @staticmethod
     def _is_connected(client):
@@ -70,10 +73,17 @@ class DataGetter:
                 print("Disconnected from device.")
         self.client = None
 
-    async def read_gps_status(self):
+    async def read_gps_status(self, logger=None):
         if self.is_connected():
             gps_data = await self.client.read_gatt_char(self.GPS_STATUS_CHARACTERISTIC_UUID)
             if len(gps_data) < 8:
+                now_s = time.monotonic()
+                if logger and (now_s - self._last_short_gps_log_s) > 2.0:
+                    logger.log_message(
+                        f"GPS payload too short: expected 8 bytes, got {len(gps_data)} bytes",
+                        level="WARN"
+                    )
+                    self._last_short_gps_log_s = now_s
                 return None
 
             lat, lon = struct.unpack('<ff', gps_data[:8])
@@ -83,10 +93,17 @@ class DataGetter:
             }
         return None
 
-    async def read_imu_data(self):
+    async def read_imu_data(self, logger=None):
         if self.is_connected():
             imu_data = await self.client.read_gatt_char(self.IMU_CHARACTERISTIC_UUID)
             if len(imu_data) < 48:
+                now_s = time.monotonic()
+                if logger and (now_s - self._last_short_imu_log_s) > 2.0:
+                    logger.log_message(
+                        f"IMU payload too short: expected 48 bytes, got {len(imu_data)} bytes",
+                        level="WARN"
+                    )
+                    self._last_short_imu_log_s = now_s
                 return None
 
             imu_values = struct.unpack('<ffffffffffff', imu_data[:48])

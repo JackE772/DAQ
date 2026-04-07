@@ -191,15 +191,24 @@ async def async_ble_loop(window):
                         window.start_playback()
                         live_playback_started = True
 
-                gps_data = await data_getter.read_gps_status()
-                imu_data = await data_getter.read_imu_data()
+                gps_data = await data_getter.read_gps_status(logger=window.text_console)
+                imu_data = await data_getter.read_imu_data(logger=window.text_console)
                 now_s = asyncio.get_running_loop().time()
+
+                window.text_console.log_message(
+                    f"RAW GPS payload: {gps_data}",
+                    level="DEBUG"
+                )
+                window.text_console.log_message(
+                    f"RAW IMU payload: {imu_data}",
+                    level="DEBUG"
+                )
 
                 if imu_data is not None:
                     speed = math.sqrt(imu_data["vx"]**2 + imu_data["vy"]**2)
                     gps_state = "available" if gps_data is not None else "unavailable"
                     window.text_console.log_message(
-                        f"BLE poll complete. GPS {gps_state}. Speed {speed:.2f} m/s",
+                        f"BLE poll complete (source=IMU). GPS {gps_state}. Speed {speed:.2f} m/s",
                         level="DEBUG"
                     )
 
@@ -259,7 +268,7 @@ async def async_ble_loop(window):
 
                             gps_speed = math.sqrt(vx**2 + vy**2)
                             window.text_console.log_message(
-                                f"IMU unavailable. Using GPS-estimated motion. Speed {gps_speed:.2f} m/s",
+                                f"BLE poll complete (source=GPS fallback). Speed {gps_speed:.2f} m/s",
                                 level="WARN"
                             )
 
