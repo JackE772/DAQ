@@ -10,8 +10,10 @@ from console import ConsoleWindow
 from ble_getter import DataGetter
 from speedometer import SpeedometerWidget
 from acceleration_chart import AccelerationChart
+from vcu_time_charts import VCUGraphPanel
+from vcu_widget import VCUStatusWidget
 from PySide6.QtCore import Qt, Signal
-from PySide6.QtWidgets import QApplication, QMainWindow, QHBoxLayout, QWidget, QPushButton, QVBoxLayout, QSplitter
+from PySide6.QtWidgets import QApplication, QMainWindow, QHBoxLayout, QWidget, QPushButton, QVBoxLayout, QSplitter, QStackedWidget, QSlider, QLabel, QInputDialog
 from qasync import QEventLoop, asyncSlot
 
 #color pallette
@@ -22,6 +24,7 @@ borders = "#7a0b0b"
 class MainWindow(QMainWindow):
     loaded_file_path = None
     gps_updated = Signal(str)
+    vcu_telemetry_updated = Signal(dict)
     sourceType = "Bluetooth"
     playback = Signal(bool)
 
@@ -44,6 +47,12 @@ class MainWindow(QMainWindow):
         super().__init__()
         self.setWindowTitle("Data Processor")
 
+        self.is_playing = False
+        self.slider_is_scrubbing = False
+        self.resume_after_scrub = False
+        self.updating_timeline_ui = False
+        self.current_display_mode = "map"
+
         central_widget = QWidget()
         self.setCentralWidget(central_widget)
 
@@ -53,7 +62,7 @@ class MainWindow(QMainWindow):
         splitter.setStyleSheet(self.spliter_syle)
         layout.addWidget(splitter)
 
-        self.sidebar = Sidebar()
+        self.sidebar = Sidebar(main_window=self)
         self.sidebar.setMinimumWidth(100)
         self.sidebar.setMaximumWidth(300)
         splitter.addWidget(self.sidebar)
@@ -69,17 +78,52 @@ class MainWindow(QMainWindow):
         content = QWidget()
         content_layout = QVBoxLayout(content)
         self.GPSDisplay = GPSWidget(self)
-        content_layout.addWidget(self.GPSDisplay)
+        self.vcu_graph_panel = VCUGraphPanel(self)
+        self.main_display_stack = QStackedWidget()
+        self.main_display_stack.addWidget(self.GPSDisplay)
+        self.main_display_stack.addWidget(self.vcu_graph_panel)
+        content_layout.addWidget(self.main_display_stack)
+
+        self.GPSDisplay.display_mode_changed.connect(self.handle_display_mode_changed)
+        self.vcu_status_widget = VCUStatusWidget(self)
+        self.vcu_telemetry_updated.connect(self.vcu_graph_panel.update_from_payload)
+        self.vcu_telemetry_updated.connect(self.vcu_status_widget.set_data)
+        self.GPSDisplay.playback_position_changed.connect(self.handle_playback_position_changed)
+        self.GPSDisplay.playback_range_changed.connect(self.handle_playback_range_changed)
+
         self.playbackButton = QPushButton("play")
         self.playbackButton.clicked.connect(self.start_playback)
         self.pausePlaybackButton = QPushButton("pause")
         self.pausePlaybackButton.clicked.connect(self.pause_playback)
+        self.restartPlaybackButton = QPushButton("restart")
+        self.restartPlaybackButton.clicked.connect(self.restart_from_selected_file)
         self.buttonContent = QWidget()
         self.buttonContent.setMaximumHeight(50)
         playbackLayout = QHBoxLayout(self.buttonContent)
         playbackLayout.addWidget(self.playbackButton)
         playbackLayout.addWidget(self.pausePlaybackButton)
+        playbackLayout.addWidget(self.restartPlaybackButton)
         content_layout.addWidget(self.buttonContent)
+
+        self.timelineContent = QWidget()
+        timelineLayout = QHBoxLayout(self.timelineContent)
+        timelineLayout.setContentsMargins(0, 0, 0, 0)
+        timelineLayout.setSpacing(8)
+
+        self.timelineCurrentLabel = QLabel("00:00")
+        self.timelineTotalLabel = QLabel("00:00")
+        self.timelineSlider = QSlider(Qt.Horizontal)
+        self.timelineSlider.setEnabled(False)
+        self.timelineSlider.setRange(0, 0)
+
+        self.timelineSlider.sliderPressed.connect(self.handle_timeline_slider_pressed)
+        self.timelineSlider.sliderReleased.connect(self.handle_timeline_slider_released)
+        self.timelineSlider.sliderMoved.connect(self.handle_timeline_slider_moved)
+
+        timelineLayout.addWidget(self.timelineCurrentLabel)
+        timelineLayout.addWidget(self.timelineSlider)
+        timelineLayout.addWidget(self.timelineTotalLabel)
+        content_layout.addWidget(self.timelineContent)
 
         console_widget = QWidget()
         console_layout = QVBoxLayout(console_widget)
@@ -95,48 +139,163 @@ class MainWindow(QMainWindow):
 
         rightSideSlider = QSplitter(Qt.Vertical)
         self.speedometer = SpeedometerWidget(self.GPSDisplay, main_window=self)
+        self.telemetry_stack = QStackedWidget()
+        self.telemetry_stack.addWidget(self.speedometer)
+        self.telemetry_stack.addWidget(self.vcu_status_widget)
+        self.telemetry_stack.setCurrentWidget(self.speedometer)
         rightSideSlider.setFixedWidth(350)
-        rightSideSlider.addWidget(self.speedometer)
+        rightSideSlider.addWidget(self.telemetry_stack)
 
         self.acceleration_chart = AccelerationChart(self.GPSDisplay)
         self.GPSDisplay.output_acceleration.connect(self.acceleration_chart.add_acceleration)
         rightSideSlider.addWidget(self.acceleration_chart)
+        rightSideSlider.setStretchFactor(0, 2)
+        rightSideSlider.setStretchFactor(1, 2)
+        rightSideSlider.setSizes([320, 280])
         splitter.addWidget(rightSideSlider)
+
+    def set_source_mode(self, mode):
+        if hasattr(self.sidebar, "set_source_mode"):
+            self.sidebar.set_source_mode(mode)
+        self.handle_type_selected(mode)
 
     def handle_type_selected(self, mode):
         print(f"MainWindow opperating using: {mode} mode")
         self.sourceType = mode
+        if mode == "Bluetooth":
+            self.handle_display_mode_changed("map")
+
+    def handle_display_mode_changed(self, mode):
+        self.current_display_mode = mode
+        if mode == "vcu":
+            self.main_display_stack.setCurrentWidget(self.vcu_graph_panel)
+            self.telemetry_stack.setCurrentWidget(self.vcu_status_widget)
+            self.vcu_graph_panel.rebuild_from_datapoints(
+                self.GPSDisplay.data,
+                self.GPSDisplay.get_current_index()
+            )
+            self.vcu_status_widget.rebuild_from_datapoints(
+                self.GPSDisplay.data,
+                self.GPSDisplay.get_current_index()
+            )
+            self.acceleration_chart.rebuild_from_datapoints(
+                self.GPSDisplay.data,
+                self.GPSDisplay.get_current_index()
+            )
+            return
+
+        self.main_display_stack.setCurrentWidget(self.GPSDisplay)
+        self.telemetry_stack.setCurrentWidget(self.speedometer)
+        self.vcu_status_widget.clear_data()
+        self.acceleration_chart.rebuild_from_datapoints(
+            self.GPSDisplay.data,
+            self.GPSDisplay.get_current_index()
+        )
 
     def handle_file_selected(self, path):
         print(f"MainWindow loaded file: {path}")
         self.loaded_file_path = path
+        self.set_source_mode("File")
+        if self.sourceType == "File":
+            self.reload_selected_file(path)
 
     def start_playback(self):
+        self.is_playing = True
         self.playback.emit(True)
 
     def pause_playback(self):
+        self.is_playing = False
         self.playback.emit(False)
+
+    def _clear_for_file_reload(self):
+        self.pause_playback()
+        self.slider_is_scrubbing = False
+        self.resume_after_scrub = False
+
+        self.GPSDisplay.clear_loaded_state()
+        self.vcu_graph_panel.clear_data()
+        self.speedometer.reset_state()
+        self.acceleration_chart.clear_data()
+        self.vcu_status_widget.clear_data()
+
+        self.updating_timeline_ui = True
+        self.timelineSlider.setEnabled(False)
+        self.timelineSlider.setRange(0, 0)
+        self.timelineSlider.setValue(0)
+        self.timelineCurrentLabel.setText("00:00")
+        self.timelineTotalLabel.setText("00:00")
+        self.updating_timeline_ui = False
+
+    def reload_selected_file(self, path):
+        if not path:
+            self.text_console.log_message("No file selected to load.", level="WARN")
+            return
+
+        self._clear_for_file_reload()
+        self.gps_updated.emit(path)
+
+    def restart_from_selected_file(self):
+        self.reload_selected_file(self.loaded_file_path)
+
+    def _format_time_label(self, ms):
+        total_seconds = max(0, int(ms) // 1000)
+        minutes = total_seconds // 60
+        seconds = total_seconds % 60
+        return f"{minutes:02d}:{seconds:02d}"
+
+    def handle_playback_range_changed(self, max_index, total_time_ms):
+        self.updating_timeline_ui = True
+        self.timelineSlider.setEnabled(max_index > 0)
+        self.timelineSlider.setRange(0, max_index)
+        self.timelineSlider.setValue(0)
+        self.timelineCurrentLabel.setText("00:00")
+        self.timelineTotalLabel.setText(self._format_time_label(total_time_ms))
+        self.updating_timeline_ui = False
+
+    def handle_playback_position_changed(self, current_index, current_time_ms, total_time_ms):
+        self.timelineCurrentLabel.setText(self._format_time_label(current_time_ms))
+        self.timelineTotalLabel.setText(self._format_time_label(total_time_ms))
+
+        if self.slider_is_scrubbing:
+            return
+
+        self.updating_timeline_ui = True
+        self.timelineSlider.setValue(current_index)
+        self.updating_timeline_ui = False
+
+    def handle_timeline_slider_pressed(self):
+        self.slider_is_scrubbing = True
+        self.resume_after_scrub = self.is_playing
+        if self.is_playing:
+            self.pause_playback()
+
+    def handle_timeline_slider_moved(self, index):
+        if self.updating_timeline_ui:
+            return
+
+        self.GPSDisplay.seek_to_index(index)
+        self.vcu_graph_panel.rebuild_from_datapoints(self.GPSDisplay.data, index)
+        self.vcu_status_widget.rebuild_from_datapoints(self.GPSDisplay.data, index)
+        self.acceleration_chart.rebuild_from_datapoints(self.GPSDisplay.data, index)
+
+    def handle_timeline_slider_released(self):
+        self.slider_is_scrubbing = False
+        index = self.timelineSlider.value()
+        self.GPSDisplay.seek_to_index(index)
+        self.vcu_graph_panel.rebuild_from_datapoints(self.GPSDisplay.data, index)
+        self.vcu_status_widget.rebuild_from_datapoints(self.GPSDisplay.data, index)
+        self.acceleration_chart.rebuild_from_datapoints(self.GPSDisplay.data, index)
+
+        if self.resume_after_scrub:
+            self.start_playback()
+        self.resume_after_scrub = False
 
 def emit_GPS_pos_from_file(window):
     window.gps_updated.emit(window.loaded_file_path)
 
 async def async_update_GPS_pos(window):
-    window.text_console.log_message("File loader task started. Waiting for File mode.", level="INFO")
-
-    while True:
-        if window.sourceType != "File":
-            await asyncio.sleep(0.5)
-            continue
-
-        await asyncio.sleep(0.5)
-        if(window.loaded_file_path != None):
-            window.text_console.log_message(
-                f"File selected. Loading GPS data from {window.loaded_file_path}",
-                level="SUCCESS"
-            )
-            break
-
-    emit_GPS_pos_from_file(window)
+    # Legacy no-op: file reload is now handled immediately in handle_file_selected.
+    return
 
 async def async_ble_loop(window):
     data_getter = DataGetter()
@@ -327,7 +486,19 @@ async def async_ble_loop(window):
 
 def main():
     app = QApplication(sys.argv)
+    selected_mode, accepted = QInputDialog.getItem(
+        None,
+        "Select Startup Mode",
+        "Choose the app mode to start in:",
+        ["Bluetooth", "File"],
+        0,
+        False,
+    )
+    if not accepted:
+        selected_mode = "Bluetooth"
+
     window = MainWindow()
+    window.set_source_mode(selected_mode)
     window.showMaximized()
 
     # Integrate asyncio loop with Qt

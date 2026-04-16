@@ -28,6 +28,13 @@ class SpeedometerWidget(QWidget):
         self.max_speed_true = max(self.speed_log)
         self.update()
 
+    def reset_state(self):
+        self.true_speed = 0.0
+        self.needle_speed = 0.0
+        self.max_speed_true = 0.0
+        self.speed_log.clear()
+        self.update()
+
     def paintEvent(self, event):
         painter = QPainter(self)
         painter.setRenderHint(QPainter.Antialiasing)

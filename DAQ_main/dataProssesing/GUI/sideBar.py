@@ -7,9 +7,9 @@ class Sidebar(QWidget):
 
     sourceFile = Signal(str)
 
-    def __init__(self, parent=None):
+    def __init__(self, main_window=None, parent=None):
         super().__init__(parent)
-        self.sourceType.emit("Bluetooth") # default source type
+        self.main_window = main_window
         self.setFixedWidth(400)  # sidebar width
         self.setStyleSheet("""
             QPushButton {
@@ -49,33 +49,43 @@ class Sidebar(QWidget):
         layout.addWidget(self.BLELabel)
         layout.addWidget(self.BLESelector)
 
-        self.file_ble_UI_switch("Bluetooth")  # set initial state
+        self._apply_source_widgets("Bluetooth")
         self.scourceSelector.currentTextChanged.connect(self.file_ble_UI_switch)
 
         layout.addStretch()  # push everything up
 
-    def file_ble_UI_switch(self, source):
+    def _apply_source_widgets(self, source):
         if source == "File":
             self.BLELabel.hide()
             self.BLESelector.hide()
             self.file_label.show()
             self.select_file_button.show()
             self.fileSelectorLable.show()
-            self.sourceType.emit("File")
         elif source == "Bluetooth":
             self.BLELabel.show()
             self.BLESelector.show()
             self.file_label.hide()
             self.select_file_button.hide()
             self.fileSelectorLable.hide()
-            self.sourceType.emit("Bluetooth")
         elif source == "Simulator (not implemented)":
             self.BLELabel.hide()
             self.BLESelector.hide()
             self.file_label.hide()
             self.select_file_button.hide()
             self.fileSelectorLable.hide()
-            self.sourceType.emit("Simulator")
+
+    def file_ble_UI_switch(self, source):
+        self._apply_source_widgets(source)
+        self.sourceType.emit(source)
+
+    def set_source_mode(self, source):
+        current_state = self.scourceSelector.blockSignals(True)
+        try:
+            self.scourceSelector.setCurrentText(source)
+        finally:
+            self.scourceSelector.blockSignals(current_state)
+
+        self._apply_source_widgets(source)
 
     def open_file_dialog(self):
         # Open a standard file dialog (blocks until closed)
@@ -83,7 +93,12 @@ class Sidebar(QWidget):
             self,
             "Select a file",
             "",                           # starting directory ("" = current)
-            "CSV Files (*.csv)"  # file filters
+            (
+                "Data Files (*.csv *.txt *.log *.tsv *.dat);;"
+                "CSV Files (*.csv);;"
+                "Text/Log Files (*.txt *.log *.tsv *.dat);;"
+                "All Files (*)"
+            )
         )
 
         if file_path:  # User selected a file

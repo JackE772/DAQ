@@ -1,8 +1,9 @@
-from PySide6.QtWidgets import QWidget
+from PySide6.QtWidgets import QWidget, QInputDialog
 from PySide6.QtGui import QPainter, QPen, QColor, QPixmap, QPainterPath
 from PySide6.QtCore import Qt, QPointF, QTimer, Signal
 import csv
 import math
+import os
 import time
 
 class DataPoint():
@@ -24,6 +25,9 @@ class GPSWidget(QWidget):
     playback = False
     output_speed = Signal(float)
     output_acceleration = Signal(float) #tuple of (ax, ay, az) in m/s^2
+    display_mode_changed = Signal(str)
+    playback_position_changed = Signal(int, int, int)
+    playback_range_changed = Signal(int, int)
 
     def __init__(self, main_window):
         super().__init__()
@@ -57,6 +61,7 @@ class GPSWidget(QWidget):
         self.zoom = 1.0
         self.zoom_min = 0.1
         self.zoom_max = 50.0
+        self.zoom_scroll_remainder = 0.0
 
         #display setting
         self.scale = 10  # pixels per meter
@@ -75,6 +80,8 @@ class GPSWidget(QWidget):
         #settings for playback
         self.points = []
         self.playback_index = 0
+        self.current_index = 0
+        self.current_file_mode = "legacy"
         self.ms_per_point = 100
         self.live_start_time_s = None
         #only show one update in 50 becuase the GPS updates slower than the adafruit polls
@@ -89,6 +96,7 @@ class GPSWidget(QWidget):
     def configure_for_live_mode(self):
         self.playback_step_size = 1
         self.ms_per_point = 50
+        self.display_mode_changed.emit("map")
         if self.playback_index >= len(self.data):
             self.playback_index = max(0, len(self.data) - 1)
 
@@ -143,11 +151,26 @@ class GPSWidget(QWidget):
 
     #zoom control
     def wheelEvent(self, event):
-        zoom_factor = 1.15
+        scroll_delta = event.angleDelta().y()
+        if scroll_delta == 0:
+            scroll_delta = event.pixelDelta().y()
+
+        if scroll_delta == 0:
+            return
+
+        self.zoom_scroll_remainder += scroll_delta
+        threshold = 90.0
+        if abs(self.zoom_scroll_remainder) < threshold:
+            return
+
+        steps = int(abs(self.zoom_scroll_remainder) // threshold)
+        direction = 1 if self.zoom_scroll_remainder > 0 else -1
+        self.zoom_scroll_remainder -= direction * steps * threshold
+
+        zoom_factor = 1.08 ** steps
 
         old_zoom = self.zoom
-
-        if event.angleDelta().y() > 0:
+        if direction > 0:
             new_zoom = self.zoom * zoom_factor
         else:
             new_zoom = self.zoom / zoom_factor
@@ -220,10 +243,119 @@ class GPSWidget(QWidget):
         return int(t * (self.num_buckets - 1))
 
     def get_time(self):
-        if self.playback_index < len(self.data):
-            return self.data[self.playback_index].time
+        if self.current_index < len(self.data):
+            return self.data[self.current_index].time
         else:
             return 0
+
+    def get_data_length(self):
+        return len(self.data)
+
+    def get_current_index(self):
+        if not self.data:
+            return 0
+        return max(0, min(self.current_index, len(self.data) - 1))
+
+    def get_total_time_ms(self):
+        if not self.data:
+            return 0
+        return int(self.data[-1].time)
+
+    def _emit_vcu_payload(self, data_point):
+        if not hasattr(self.main_window, "vcu_telemetry_updated"):
+            return
+
+        if hasattr(data_point, "battery_percent"):
+            self.main_window.vcu_telemetry_updated.emit({
+                "is_vcu": True,
+                "line_number": getattr(data_point, "line_number", None),
+                "time_ms": getattr(data_point, "time_ms", data_point.time),
+                "speed_mph": getattr(data_point, "speed_mph", None),
+                "speed_mps": data_point.speed,
+                "battery_percent": getattr(data_point, "battery_percent", 0.0),
+                "dc_current": getattr(data_point, "dc_current", None),
+                "ac_current": getattr(data_point, "ac_current", None),
+                "ac_voltage": getattr(data_point, "ac_voltage", None),
+            })
+        else:
+            self.main_window.vcu_telemetry_updated.emit({"is_vcu": False})
+
+    def _emit_outputs_for_index(self, index):
+        if not self.data:
+            return
+
+        data_point = self.data[index]
+        self.output_speed.emit(data_point.speed)
+        self.output_acceleration.emit(data_point.acceleration)
+        self._emit_vcu_payload(data_point)
+
+    def _emit_playback_position(self, index):
+        if not self.data:
+            self.playback_position_changed.emit(0, 0, 0)
+            return
+
+        current_time = int(self.data[index].time)
+        total_time = int(self.data[-1].time)
+        self.playback_position_changed.emit(index, current_time, total_time)
+
+    def _rebuild_path_to_index(self, end_index):
+        self.points.clear()
+        self.paths = [QPainterPath() for _ in range(self.num_buckets)]
+
+        if not self.data or end_index < 0:
+            return
+
+        previous_point = None
+        last_index = min(end_index, len(self.data) - 1)
+        for index in range(last_index + 1):
+            data_point = self.data[index]
+            point = self.latlon_to_point(data_point.latitude, data_point.longitude)
+            bucket = self.speed_to_bucket(data_point.speed)
+
+            if previous_point is None:
+                self.paths[bucket].moveTo(point)
+            else:
+                self.paths[bucket].moveTo(previous_point)
+                self.paths[bucket].lineTo(point)
+
+            self.points.append(point)
+            previous_point = point
+
+    def seek_to_index(self, index):
+        if not self.data:
+            return
+
+        clamped_index = max(0, min(index, len(self.data) - 1))
+        self.playback_index = clamped_index
+        self.current_index = clamped_index
+
+        self._rebuild_path_to_index(clamped_index)
+        self._emit_outputs_for_index(clamped_index)
+        self._emit_playback_position(clamped_index)
+        self.update()
+
+    def clear_loaded_state(self):
+        self.timer.stop()
+        self.playback = False
+        self.zoom_scroll_remainder = 0.0
+
+        self.data.clear()
+        self.points.clear()
+        self.paths = [QPainterPath() for _ in range(self.num_buckets)]
+
+        self.playback_index = 0
+        self.current_index = 0
+        self.rows_skiped = 0
+        self.lat_offset = 0
+        self.lon_offset = 0
+        self.live_start_time_s = None
+
+        self.playback_range_changed.emit(0, 0)
+        self.playback_position_changed.emit(0, 0, 0)
+        if hasattr(self.main_window, "vcu_telemetry_updated"):
+            self.main_window.vcu_telemetry_updated.emit({"is_vcu": False})
+
+        self.update()
 
     def latlon_to_point(self, lat, lon):
         # Earth radius approximation
@@ -239,16 +371,18 @@ class GPSWidget(QWidget):
             self.timer.stop()
             return
 
-        latitude = self.data[self.playback_index].latitude
-        longitude = self.data[self.playback_index].longitude
-        acceleration = self.data[self.playback_index].acceleration
-        speed = self.data[self.playback_index].speed
+        current_index = self.playback_index
+        self.current_index = current_index
+        current_data = self.data[current_index]
+        latitude = current_data.latitude
+        longitude = current_data.longitude
+        acceleration = current_data.acceleration
+        speed = current_data.speed
 
         point = self.latlon_to_point(latitude, longitude)
 
-        if(speed > 0):
-            self.output_speed.emit(speed)
-            self.output_acceleration.emit(acceleration)
+        self._emit_outputs_for_index(current_index)
+
         bucket = self.speed_to_bucket(speed)
 
         # add segment to correct bucket path
@@ -259,6 +393,7 @@ class GPSWidget(QWidget):
             self.paths[bucket].moveTo(point)
 
         self.points.append(point)
+        self._emit_playback_position(current_index)
         self.playback_index += self.playback_step_size
         self.update()
 
@@ -273,6 +408,155 @@ class GPSWidget(QWidget):
         else:
             self.timer.stop()
 
+    def _resolve_file_mode(self, path):
+        filename = os.path.basename(path).lower()
+
+        if filename.startswith("vcu_"):
+            return "vcu"
+        if filename.startswith("gps_") or filename.startswith("imu_"):
+            return "legacy"
+
+        choice, accepted = QInputDialog.getItem(
+            self,
+            "Select File Format",
+            (
+                "Could not detect file format from filename prefix.\n"
+                "Use 'vcu_' for new VCU logs or 'gps_'/'imu_' for legacy logs.\n"
+                "Choose format for this file:"
+            ),
+            ["Legacy (gps_/imu_)", "VCU (vcu_)"]
+        )
+
+        if not accepted:
+            return None
+        return "vcu" if "VCU" in choice else "legacy"
+
+    def _load_legacy_file(self, rows):
+        if not rows:
+            raise ValueError("Loaded file is empty")
+
+        headers = rows[0]
+        data_rows = rows[1:]
+
+        # normalize header names
+        header_map = {h.strip().lower(): i for i, h in enumerate(headers)}
+
+        try:
+            lat_key = next(k for k in header_map if "lat" in k)
+            lon_key = next(k for k in header_map if "lon" in k)
+            time_key = next(k for k in header_map if "millis" in k)
+            vx_imu_key = next(k for k in header_map if "vx_imu" in k)
+            vy_imu_key = next(k for k in header_map if "vy_imu" in k)
+            ax_w_key = next(k for k in header_map if "ax_w" in k)
+            ay_w_key = next(k for k in header_map if "ay_w" in k)
+        except StopIteration as exc:
+            raise ValueError(
+                "Loaded file does not have proper legacy labels for lon/lat/time/IMU columns"
+            ) from exc
+
+        lat_idx = header_map[lat_key]
+        lon_idx = header_map[lon_key]
+        time_idx = header_map[time_key]
+        vx_imu_idx = header_map[vx_imu_key]
+        vy_imu_idx = header_map[vy_imu_key]
+        ax_w_idx = header_map[ax_w_key]
+        ay_w_idx = header_map[ay_w_key]
+
+        data_import_list: list[DataPoint] = []
+        for row in data_rows:
+            try:
+                data_import_list.append(DataPoint(
+                    x=float(row[lat_idx]),
+                    y=float(row[lon_idx]),
+                    s=math.sqrt(float(row[vx_imu_idx]) * float(row[vx_imu_idx]) + float(row[vy_imu_idx]) * float(row[vy_imu_idx])),
+                    a=math.sqrt(float(row[ax_w_idx]) * float(row[ax_w_idx]) + float(row[ay_w_idx]) * float(row[ay_w_idx])),
+                    t=int(float(row[time_idx]))
+                ))
+            except (ValueError, IndexError):
+                continue
+
+        skipped_rows = 0
+        output_data: list[DataPoint] = []
+        for data_point in data_import_list:
+            if data_point.latitude != 0 and data_point.longitude != 0:
+                output_data.append(data_point)
+            else:
+                skipped_rows += 1
+
+        return output_data, skipped_rows
+
+    def _load_vcu_file(self, rows):
+        if not rows:
+            raise ValueError("Loaded file is empty")
+
+        MPH_TO_MPS = 0.44704
+        METERS_PER_DEGREE = 111_320.0
+
+        start_idx = 0
+        # Accept optional header row; data rows should be numeric and include at least 7 columns.
+        if len(rows[0]) < 7:
+            start_idx = 1
+        else:
+            try:
+                float(rows[0][1])
+                float(rows[0][2])
+            except (ValueError, IndexError):
+                start_idx = 1
+
+        data_rows = rows[start_idx:]
+        output_data: list[DataPoint] = []
+
+        prev_time_ms = None
+        prev_speed_mps = None
+        distance_m = 0.0
+        skipped_rows = 0
+
+        for row in data_rows:
+            try:
+                if len(row) < 7:
+                    raise ValueError("Not enough columns")
+
+                time_ms = int(float(row[1]))
+                line_number = int(float(row[0]))
+                speed_mps = float(row[2]) * MPH_TO_MPS
+                speed_mph = float(row[2])
+
+                acceleration = 0.0
+                if prev_time_ms is not None and prev_speed_mps is not None:
+                    dt_s = (time_ms - prev_time_ms) / 1000.0
+                    if dt_s > 0:
+                        acceleration = abs((speed_mps - prev_speed_mps) / dt_s)
+                        distance_m += speed_mps * dt_s
+
+                latitude = distance_m / METERS_PER_DEGREE
+                longitude = 0.0
+
+                data_point = DataPoint(
+                    x=latitude,
+                    y=longitude,
+                    s=speed_mps,
+                    a=acceleration,
+                    t=time_ms,
+                )
+
+                # Preserve VCU-specific telemetry for future UI usage.
+                data_point.dc_current = float(row[3])
+                data_point.ac_current = float(row[4])
+                data_point.ac_voltage = float(row[5])
+                data_point.battery_percent = max(0.0, min(100.0, float(row[6])))
+                data_point.line_number = line_number
+                data_point.time_ms = time_ms
+                data_point.speed_mph = speed_mph
+
+                output_data.append(data_point)
+                prev_time_ms = time_ms
+                prev_speed_mps = speed_mps
+            except (ValueError, IndexError):
+                skipped_rows += 1
+                continue
+
+        return output_data, skipped_rows
+
     def load_from_file(self, path):
         if(path == None):
             self.main_window.text_console.log_message(
@@ -282,72 +566,105 @@ class GPSWidget(QWidget):
 
         #clear any prev loaded points
         self.playback_index = 0
+        self.current_index = 0
         self.points.clear()
 
         self.data.clear()
+        self.paths = [QPainterPath() for _ in range(self.num_buckets)]
 
-        with open(path, "r", newline="") as csvfile:
-            reader = csv.reader(csvfile)
-            headers = next(reader)
-
-            # normalize header names
-            header_map = {h.strip().lower(): i for i, h in enumerate(headers)}
-
-            # possible column names
-            try:
-                lat_key = next(k for k in header_map if "lat" in k)
-                lon_key = next(k for k in header_map if "lon" in k)
-                time_key = next(k for k in header_map if "millis" in k)
-                vx_imu_key = next(k for k in header_map if "vx_imu" in k)
-                vy_imu_key = next(k for k in header_map if "vy_imu" in k)
-                ax_w_key = next(k for k in header_map if "ax_w" in k)
-                ay_w_key = next(k for k in header_map if "ay_w" in k)
-            except StopIteration:
-                self.main_window.text_console.log_message(
-                    f"Loaded File does not have propper data labeling \n unable to load lon/lat data cols"
-                )
-                return
-
-            lat_idx = header_map[lat_key]
-            lon_idx = header_map[lon_key]
-            time_idx = header_map[time_key]
-            vx_imu_idx = header_map[vx_imu_key]
-            vy_imu_idx = header_map[vy_imu_key]
-            ax_w_idx = header_map[ax_w_key]
-            ay_w_idx = header_map[ay_w_key]
-            
-            data_import_list: list[DataPoint] = list()
-
-            for row in reader:
-                try:
-                    data_import_list.append(DataPoint(
-                        x = float(row[lat_idx]),
-                        y = float(row[lon_idx]),
-                        s = math.sqrt(float(row[vx_imu_idx])*float(row[vx_imu_idx])+float(row[vy_imu_idx])*float(row[vy_imu_idx])),
-                        a = math.sqrt(float(row[ax_w_idx])*float(row[ax_w_idx])+float(row[ay_w_idx])*float(row[ay_w_idx])),
-                        t = int(row[time_idx])
-                        ))
-                except (ValueError, IndexError):
-                    continue  # skip bad rows
-
-            #remove values from before the GPS inits
-            self.rows_skiped = 0
-
-            for d in data_import_list:
-                if d.latitude != 0 and d.longitude != 0:
-                    self.data.append(d)
-                else: self.rows_skiped += 1
-                
-            self.lat_offset = self.data[0].latitude
-            self.lon_offset = self.data[0].longitude
-
+        mode = self._resolve_file_mode(path)
+        if mode is None:
             self.main_window.text_console.log_message(
-                f"""
-                Loaded {len(self.data)} Data Points. Skipped {self.rows_skiped} rows.\n
-                Max Speed: {max(self.data, key=lambda x: x.speed).speed:.2f} m/s\n
-                Max Acceleration: {max(self.data, key=lambda x: x.acceleration).acceleration:.2f} m/s²
-                """
+                "File format selection canceled. No data loaded.",
+                level="WARN"
             )
+            return
+
+        if mode == "vcu":
+            self.current_file_mode = "vcu"
+            self.display_mode_changed.emit("vcu")
+        else:
+            self.current_file_mode = "legacy"
+            self.display_mode_changed.emit("map")
+
+        try:
+            rows = self._read_rows_csv_first(path)
+
+            if mode == "vcu":
+                self.data, self.rows_skiped = self._load_vcu_file(rows)
+            else:
+                self.data, self.rows_skiped = self._load_legacy_file(rows)
+        except (OSError, ValueError) as exc:
+            self.main_window.text_console.log_message(str(exc), level="ERROR")
+            return
+
+        if not self.data:
+            self.main_window.text_console.log_message(
+                f"No valid rows found in file ({mode} mode).",
+                level="ERROR"
+            )
+            return
+
+        self.lat_offset = self.data[0].latitude
+        self.lon_offset = self.data[0].longitude
+
+        self.main_window.text_console.log_message(
+            (
+                f"Loaded {len(self.data)} Data Points in {mode.upper()} mode. "
+                f"Skipped {self.rows_skiped} rows.\n"
+                f"Max Speed: {max(self.data, key=lambda x: x.speed).speed:.2f} m/s\n"
+                f"Max Acceleration: {max(self.data, key=lambda x: x.acceleration).acceleration:.2f} m/s²"
+            ),
+            level="SUCCESS"
+        )
+
+        self.playback_range_changed.emit(max(0, len(self.data) - 1), int(self.data[-1].time))
+        self.seek_to_index(0)
+
+    def _read_rows_csv_first(self, path):
+        with open(path, "r", encoding="utf-8", newline="") as raw_file:
+            raw_text = raw_file.read()
+
+        if not raw_text.strip():
+            raise ValueError("Loaded file is empty")
+
+        # First pass: default CSV reader (comma-delimited).
+        rows = list(csv.reader(raw_text.splitlines()))
+        rows = [row for row in rows if any(cell.strip() for cell in row)]
+        if rows and max(len(row) for row in rows) > 1:
+            return rows
+
+        # Second pass: infer delimiter for common delimited text formats.
+        try:
+            sample = "\n".join(raw_text.splitlines()[:15])
+            dialect = csv.Sniffer().sniff(sample, delimiters=",;\t|")
+            rows = list(csv.reader(raw_text.splitlines(), dialect))
+            rows = [row for row in rows if any(cell.strip() for cell in row)]
+            if rows and max(len(row) for row in rows) > 1:
+                self.main_window.text_console.log_message(
+                    "Parsed file using detected delimiter (not plain comma CSV).",
+                    level="INFO"
+                )
+                return rows
+        except csv.Error:
+            pass
+
+        # Final fallback: split whitespace-delimited logs into columns.
+        whitespace_rows = []
+        for line in raw_text.splitlines():
+            stripped = line.strip()
+            if not stripped:
+                continue
+            whitespace_rows.append(stripped.split())
+
+        if whitespace_rows and max(len(row) for row in whitespace_rows) > 1:
+            self.main_window.text_console.log_message(
+                "CSV parse failed; used whitespace-delimited fallback parser.",
+                level="WARN"
+            )
+            return whitespace_rows
+
+        return rows
             
     def load_data_point(self, point):
         try:
