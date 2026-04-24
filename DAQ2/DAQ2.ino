@@ -74,19 +74,29 @@ void quatToEuler(float w, float x, float y, float z,
 
 // ── Setup ─────────────────────────────────────────────────────
 void setup() {
+    delay(500);  // give USB time to enumerate before first print
     Serial.begin(115200);
-    while (!Serial && millis() < 3000);
+    uint32_t t0 = millis();
+    while (!Serial && millis() - t0 < 4000);  // wait up to 4 s for monitor
     Serial.println("# DAQ starting...");
+    Serial.flush();
 
     // I2C + BNO085
+    Serial.println("# Init I2C...");
+    Serial.flush();
     Wire.begin(I2C_SDA, I2C_SCL);
+    Wire.setTimeout(1000);  // don't hang forever on stuck bus
+    Serial.println("# I2C bus up, probing BNO085...");
+    Serial.flush();
     if (!imu.begin_I2C(BNO08x_I2CADDR_DEFAULT, &Wire)) {
-        Serial.println("# ERROR: BNO085 not found on I2C.");
-        while (1) delay(10);
+        Serial.println("# ERROR: BNO085 not found (addr 0x4A). Check wiring/ADR pin.");
+        Serial.flush();
+        // continue without IMU rather than halting silently
+    } else {
+        imu.enableReport(SH2_ROTATION_VECTOR,     IMU_INTERVAL_US);
+        imu.enableReport(SH2_LINEAR_ACCELERATION, IMU_INTERVAL_US);
+        Serial.println("# BNO085 OK");
     }
-    imu.enableReport(SH2_ROTATION_VECTOR,     IMU_INTERVAL_US);
-    imu.enableReport(SH2_LINEAR_ACCELERATION, IMU_INTERVAL_US);
-    Serial.println("# BNO085 OK");
 
     // GPS
     gpsSerial.begin(GPS_BAUD, SERIAL_8N1, GPS_RX_PIN, GPS_TX_PIN);
