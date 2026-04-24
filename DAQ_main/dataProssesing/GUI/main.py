@@ -1,6 +1,7 @@
 #using asyncio for asynchronous programming this is deprecated and included in python
 #TODO refacter to avoid using asyncio
 import asyncio
+import os
 
 import math
 import sys
@@ -13,7 +14,7 @@ from acceleration_chart import AccelerationChart
 from vcu_time_charts import VCUGraphPanel
 from vcu_widget import VCUStatusWidget
 from PySide6.QtCore import Qt, Signal
-from PySide6.QtWidgets import QApplication, QMainWindow, QHBoxLayout, QWidget, QPushButton, QVBoxLayout, QSplitter, QStackedWidget, QSlider, QLabel, QInputDialog
+from PySide6.QtWidgets import QApplication, QMainWindow, QHBoxLayout, QWidget, QPushButton, QVBoxLayout, QSplitter, QStackedWidget, QSlider, QLabel, QFrame, QSizePolicy
 from qasync import QEventLoop, asyncSlot
 
 #color pallette
@@ -52,19 +53,28 @@ class MainWindow(QMainWindow):
         self.resume_after_scrub = False
         self.updating_timeline_ui = False
         self.current_display_mode = "map"
+        self.bluetooth_review_mode = False
+        self.bluetooth_review_buffer = []
+        self.max_review_buffer_points = 4000
+        self.review_segment_start_index = 0
+        self.review_segment_end_index = 0
 
         central_widget = QWidget()
         self.setCentralWidget(central_widget)
 
         layout = QVBoxLayout(central_widget)
+        layout.setContentsMargins(4, 4, 4, 4)
+        layout.setSpacing(6)
+
+        self.brand_logo_path = self.resolve_brand_logo_path()
 
         splitter = QSplitter(Qt.Horizontal)
         splitter.setStyleSheet(self.spliter_syle)
         layout.addWidget(splitter)
 
-        self.sidebar = Sidebar(main_window=self)
-        self.sidebar.setMinimumWidth(100)
-        self.sidebar.setMaximumWidth(300)
+        self.sidebar = Sidebar(main_window=self, brand_logo_path=self.brand_logo_path)
+        self.sidebar.setMinimumWidth(150)
+        self.sidebar.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Expanding)
         splitter.addWidget(self.sidebar)
 
         #self.speedometer = SpeedometerWidget()
@@ -91,28 +101,53 @@ class MainWindow(QMainWindow):
         self.GPSDisplay.playback_position_changed.connect(self.handle_playback_position_changed)
         self.GPSDisplay.playback_range_changed.connect(self.handle_playback_range_changed)
 
-        self.playbackButton = QPushButton("play")
+        self.playbackButton = QPushButton("Play >")
+        self.playbackButton.setObjectName("transportButton")
+        self.playbackButton.setToolTip("Resume playback")
         self.playbackButton.clicked.connect(self.start_playback)
-        self.pausePlaybackButton = QPushButton("pause")
+        self.pausePlaybackButton = QPushButton("Pause ||")
+        self.pausePlaybackButton.setObjectName("transportButton")
+        self.pausePlaybackButton.setToolTip("Pause playback (enters review mode in Bluetooth)")
         self.pausePlaybackButton.clicked.connect(self.pause_playback)
-        self.restartPlaybackButton = QPushButton("restart")
+        self.restartPlaybackButton = QPushButton("Reset")
+        self.restartPlaybackButton.setObjectName("transportButton")
+        self.restartPlaybackButton.setToolTip("Reload selected file")
         self.restartPlaybackButton.clicked.connect(self.restart_from_selected_file)
-        self.buttonContent = QWidget()
-        self.buttonContent.setMaximumHeight(50)
+        self.returnLiveButton = QPushButton("Live View")
+        self.returnLiveButton.setObjectName("transportButton")
+        self.returnLiveButton.setToolTip("Return to live Bluetooth stream")
+        self.returnLiveButton.clicked.connect(self.return_to_live_view)
+        self.returnLiveButton.setVisible(False)
+        self.buttonContent = QFrame()
+        self.buttonContent.setObjectName("transportBar")
+        self.buttonContent.setMaximumHeight(58)
         playbackLayout = QHBoxLayout(self.buttonContent)
+        playbackLayout.setContentsMargins(10, 8, 10, 8)
+        playbackLayout.setSpacing(8)
+
+        self.liveStatusBadge = QLabel("LIVE")
+        self.liveStatusBadge.setObjectName("liveStatusBadge")
+
+        playbackLayout.addWidget(self.liveStatusBadge)
         playbackLayout.addWidget(self.playbackButton)
         playbackLayout.addWidget(self.pausePlaybackButton)
         playbackLayout.addWidget(self.restartPlaybackButton)
+        playbackLayout.addWidget(self.returnLiveButton)
+        playbackLayout.addStretch(1)
         content_layout.addWidget(self.buttonContent)
 
-        self.timelineContent = QWidget()
+        self.timelineContent = QFrame()
+        self.timelineContent.setObjectName("timelineBar")
         timelineLayout = QHBoxLayout(self.timelineContent)
-        timelineLayout.setContentsMargins(0, 0, 0, 0)
-        timelineLayout.setSpacing(8)
+        timelineLayout.setContentsMargins(10, 8, 10, 8)
+        timelineLayout.setSpacing(10)
 
         self.timelineCurrentLabel = QLabel("00:00")
+        self.timelineCurrentLabel.setObjectName("timelineLabel")
         self.timelineTotalLabel = QLabel("00:00")
+        self.timelineTotalLabel.setObjectName("timelineLabel")
         self.timelineSlider = QSlider(Qt.Horizontal)
+        self.timelineSlider.setObjectName("timelineSlider")
         self.timelineSlider.setEnabled(False)
         self.timelineSlider.setRange(0, 0)
 
@@ -124,6 +159,9 @@ class MainWindow(QMainWindow):
         timelineLayout.addWidget(self.timelineSlider)
         timelineLayout.addWidget(self.timelineTotalLabel)
         content_layout.addWidget(self.timelineContent)
+
+        self.apply_transport_styles()
+        self.set_live_status("LIVE")
 
         console_widget = QWidget()
         console_layout = QVBoxLayout(console_widget)
@@ -143,7 +181,8 @@ class MainWindow(QMainWindow):
         self.telemetry_stack.addWidget(self.speedometer)
         self.telemetry_stack.addWidget(self.vcu_status_widget)
         self.telemetry_stack.setCurrentWidget(self.speedometer)
-        rightSideSlider.setFixedWidth(350)
+        rightSideSlider.setMinimumWidth(150)
+        rightSideSlider.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Expanding)
         rightSideSlider.addWidget(self.telemetry_stack)
 
         self.acceleration_chart = AccelerationChart(self.GPSDisplay)
@@ -153,6 +192,12 @@ class MainWindow(QMainWindow):
         rightSideSlider.setStretchFactor(1, 2)
         rightSideSlider.setSizes([320, 280])
         splitter.addWidget(rightSideSlider)
+        splitter.setStretchFactor(0, 2)
+        splitter.setStretchFactor(1, 3)
+        splitter.setStretchFactor(2, 2)
+        splitter.setSizes([168, 280, 168])
+
+        self.apply_theme_styles()
 
     def set_source_mode(self, mode):
         if hasattr(self.sidebar, "set_source_mode"):
@@ -162,8 +207,16 @@ class MainWindow(QMainWindow):
     def handle_type_selected(self, mode):
         print(f"MainWindow opperating using: {mode} mode")
         self.sourceType = mode
+        self.bluetooth_review_mode = False
+        self.bluetooth_review_buffer.clear()
+        self.review_segment_start_index = 0
+        self.review_segment_end_index = 0
+        self.returnLiveButton.setVisible(False)
         if mode == "Bluetooth":
+            self.set_live_status("LIVE")
             self.handle_display_mode_changed("map")
+        else:
+            self.set_live_status("FILE")
 
     def handle_display_mode_changed(self, mode):
         self.current_display_mode = mode
@@ -202,15 +255,96 @@ class MainWindow(QMainWindow):
     def start_playback(self):
         self.is_playing = True
         self.playback.emit(True)
+        if self.sourceType == "Bluetooth" and not self.bluetooth_review_mode:
+            self.set_live_status("LIVE")
+        elif self.sourceType == "File":
+            self.set_live_status("FILE")
 
     def pause_playback(self):
         self.is_playing = False
         self.playback.emit(False)
 
+        if self.sourceType == "Bluetooth" and not self.bluetooth_review_mode:
+            self.bluetooth_review_mode = True
+            self.bluetooth_review_buffer.clear()
+            self.review_segment_start_index = 0
+            self.review_segment_end_index = max(0, self.GPSDisplay.get_data_length() - 1)
+            self.returnLiveButton.setVisible(True)
+            self.set_live_status("REVIEW")
+            self.refresh_review_timeline_bounds()
+            self.text_console.log_message(
+                "Bluetooth paused. Entered review mode; live samples buffered."
+            )
+        elif self.sourceType == "File":
+            self.set_live_status("FILE")
+
+    def is_bluetooth_review_mode(self):
+        return self.sourceType == "Bluetooth" and self.bluetooth_review_mode
+
+    def handle_live_point(self, point):
+        if self.is_bluetooth_review_mode():
+            self.bluetooth_review_buffer.append(point)
+            if len(self.bluetooth_review_buffer) > self.max_review_buffer_points:
+                self.bluetooth_review_buffer = self.bluetooth_review_buffer[-self.max_review_buffer_points:]
+            return
+
+        self.GPSDisplay.load_data_point(point)
+        if self.sourceType == "Bluetooth":
+            self.refresh_live_timeline_bounds()
+
+    def refresh_live_timeline_bounds(self):
+        if self.sourceType != "Bluetooth" or self.bluetooth_review_mode:
+            return
+
+        max_index = max(0, self.GPSDisplay.get_data_length() - 1)
+        self.updating_timeline_ui = True
+        self.timelineSlider.setEnabled(max_index > 0)
+        self.timelineSlider.setRange(0, max_index)
+        self.timelineTotalLabel.setText(self._format_time_label(self.GPSDisplay.get_total_time_ms()))
+        self.updating_timeline_ui = False
+
+    def refresh_review_timeline_bounds(self):
+        if self.sourceType != "Bluetooth" or not self.bluetooth_review_mode:
+            return
+
+        self.review_segment_end_index = max(0, self.GPSDisplay.get_data_length() - 1)
+        self.updating_timeline_ui = True
+        self.timelineSlider.setEnabled(self.review_segment_end_index > 0)
+        self.timelineSlider.setRange(self.review_segment_start_index, self.review_segment_end_index)
+        self.timelineTotalLabel.setText(self._format_time_label(self.GPSDisplay.get_total_time_ms()))
+        self.updating_timeline_ui = False
+
+    def return_to_live_view(self):
+        if not self.is_bluetooth_review_mode():
+            return
+
+        if self.bluetooth_review_buffer:
+            for point in self.bluetooth_review_buffer:
+                self.GPSDisplay.load_data_point(point, emit_update=False)
+
+        live_index = self.GPSDisplay.get_data_length() - 1
+        if live_index >= 0:
+            self.GPSDisplay.seek_to_index(live_index)
+
+        self.bluetooth_review_buffer.clear()
+        self.bluetooth_review_mode = False
+        self.returnLiveButton.setVisible(False)
+        self.set_live_status("LIVE")
+        self.refresh_live_timeline_bounds()
+        self.start_playback()
+        self.text_console.log_message("Returned to live Bluetooth view.", level="SUCCESS")
+
     def _clear_for_file_reload(self):
         self.pause_playback()
         self.slider_is_scrubbing = False
         self.resume_after_scrub = False
+        self.bluetooth_review_mode = False
+        self.bluetooth_review_buffer.clear()
+        self.returnLiveButton.setVisible(False)
+        if self.sourceType == "Bluetooth":
+            self.set_live_status("LIVE")
+        else:
+            self.set_live_status("FILE")
 
         self.GPSDisplay.clear_loaded_state()
         self.vcu_graph_panel.clear_data()
@@ -235,6 +369,17 @@ class MainWindow(QMainWindow):
         self.gps_updated.emit(path)
 
     def restart_from_selected_file(self):
+        if self.sourceType == "Bluetooth" and self.bluetooth_review_mode:
+            if self.GPSDisplay.get_data_length() == 0:
+                return
+
+            self.GPSDisplay.seek_to_index(self.review_segment_start_index)
+            self.vcu_graph_panel.rebuild_from_datapoints(self.GPSDisplay.data, self.review_segment_start_index)
+            self.vcu_status_widget.rebuild_from_datapoints(self.GPSDisplay.data, self.review_segment_start_index)
+            self.acceleration_chart.rebuild_from_datapoints(self.GPSDisplay.data, self.review_segment_start_index)
+            self.timelineSlider.setValue(self.review_segment_start_index)
+            return
+
         self.reload_selected_file(self.loaded_file_path)
 
     def _format_time_label(self, ms):
@@ -290,6 +435,161 @@ class MainWindow(QMainWindow):
             self.start_playback()
         self.resume_after_scrub = False
 
+    def resolve_brand_logo_path(self):
+        gui_dir = os.path.dirname(os.path.abspath(__file__))
+        workspace_dir = os.path.abspath(os.path.join(gui_dir, "..", "..", ".."))
+        candidates = [
+            os.path.join(gui_dir, "assets", "ae_logo.png"),
+            os.path.join(gui_dir, "assets", "logo.png"),
+            os.path.join(workspace_dir, "assets", "ae_logo.png"),
+            os.path.join(workspace_dir, "assets", "logo.png"),
+            os.path.join(workspace_dir, "ae_logo.png"),
+            os.path.join(workspace_dir, "logo.png"),
+        ]
+
+        for path in candidates:
+            if os.path.exists(path):
+                return path
+        return None
+
+    def set_live_status(self, mode):
+        if mode == "REVIEW":
+            self.liveStatusBadge.setText("REVIEW")
+            self.liveStatusBadge.setStyleSheet(
+                "background-color: #4c1d1d; color: #ffd6d6; border: 1px solid #b94a4a; border-radius: 11px;"
+                "padding: 2px 10px; font-weight: 700;"
+            )
+            return
+
+        if mode == "FILE":
+            self.liveStatusBadge.setText("FILE")
+            self.liveStatusBadge.setStyleSheet(
+                "background-color: #232f3a; color: #dce8f5; border: 1px solid #47637d; border-radius: 11px;"
+                "padding: 2px 10px; font-weight: 700;"
+            )
+            return
+
+        self.liveStatusBadge.setText("LIVE")
+        self.liveStatusBadge.setStyleSheet(
+            "background-color: #113823; color: #bcffd7; border: 1px solid #2fa44f; border-radius: 11px;"
+            "padding: 2px 10px; font-weight: 700;"
+        )
+
+    def apply_transport_styles(self):
+        self.timelineContent.setStyleSheet(
+            "QFrame#timelineBar {"
+            " background-color: #1a0707;"
+            " border: 1px solid #5b1b1b;"
+            " border-radius: 8px;"
+            "}"
+            "QLabel#timelineLabel {"
+            " color: #f4e8e8;"
+            " font-weight: 600;"
+            " min-width: 44px;"
+            "}"
+            "QSlider#timelineSlider::groove:horizontal {"
+            " background: #2b1212;"
+            " border: 1px solid #6a2e2e;"
+            " height: 8px;"
+            " border-radius: 4px;"
+            "}"
+            "QSlider#timelineSlider::sub-page:horizontal {"
+            " background: #c04f4f;"
+            " border-radius: 4px;"
+            "}"
+            "QSlider#timelineSlider::add-page:horizontal {"
+            " background: #2b1212;"
+            " border-radius: 4px;"
+            "}"
+            "QSlider#timelineSlider::handle:horizontal {"
+            " background: #f4e8e8;"
+            " border: 1px solid #7d3a3a;"
+            " width: 14px;"
+            " margin: -5px 0;"
+            " border-radius: 7px;"
+            "}"
+            "QSlider#timelineSlider::handle:horizontal:hover {"
+            " background: #ffffff;"
+            "}"
+        )
+
+    def apply_theme_styles(self):
+        self.centralWidget().setStyleSheet(
+            "QWidget {"
+            f" background-color: {background};"
+            " color: #f4e8e8;"
+            "}"
+            "QFrame#transportBar, QFrame#timelineBar, QFrame#sidebarBrandBanner {"
+            " background-color: #1a0707;"
+            " border: 1px solid #5b1b1b;"
+            " border-radius: 8px;"
+            "}"
+            "QPushButton {"
+            " background-color: #251111;"
+            " color: #f4e8e8;"
+            " border: 1px solid #6a2e2e;"
+            " border-radius: 6px;"
+            " padding: 7px 14px;"
+            " font-weight: 600;"
+            "}"
+            "QPushButton:hover {"
+            " background-color: #321616;"
+            " border: 1px solid #8e3f3f;"
+            "}"
+            "QPushButton:pressed {"
+            " background-color: #140808;"
+            "}"
+            "QPushButton:disabled {"
+            " background-color: #1c1010;"
+            " color: #7f6767;"
+            " border: 1px solid #3f2424;"
+            "}"
+            "QComboBox, QTextEdit {"
+            " background-color: #120707;"
+            " color: #f4e8e8;"
+            " border: 1px solid #6a2e2e;"
+            " border-radius: 6px;"
+            " padding: 5px;"
+            " selection-background-color: #c04f4f;"
+            "}"
+            "QComboBox::drop-down {"
+            " border: none;"
+            " width: 22px;"
+            "}"
+            "QSlider::groove:horizontal {"
+            " background: #2b1212;"
+            " border: 1px solid #6a2e2e;"
+            " height: 8px;"
+            " border-radius: 4px;"
+            "}"
+            "QSlider::sub-page:horizontal {"
+            " background: #c04f4f;"
+            " border-radius: 4px;"
+            "}"
+            "QSlider::add-page:horizontal {"
+            " background: #2b1212;"
+            " border-radius: 4px;"
+            "}"
+            "QSlider::handle:horizontal {"
+            " background: #f4e8e8;"
+            " border: 1px solid #7d3a3a;"
+            " width: 14px;"
+            " margin: -5px 0;"
+            " border-radius: 7px;"
+            "}"
+            "QSlider::handle:horizontal:hover {"
+            " background: #ffffff;"
+            "}"
+            "QLabel#liveStatusBadge {"
+            " background-color: #113823;"
+            " color: #bcffd7;"
+            " border: 1px solid #2fa44f;"
+            " border-radius: 11px;"
+            " padding: 2px 10px;"
+            " font-weight: 700;"
+            "}"
+        )
+
 def emit_GPS_pos_from_file(window):
     window.gps_updated.emit(window.loaded_file_path)
 
@@ -299,12 +599,16 @@ async def async_update_GPS_pos(window):
 
 async def async_ble_loop(window):
     data_getter = DataGetter()
+    window.ble_data_getter = data_getter
     window.text_console.log_message("BLE loop started. Waiting for Bluetooth mode.", level="INFO")
     reconnect_delay_seconds = 2.0
+    imu_accel_scale = 1.0
+    imu_accel_deadband = 0.03
+    imu_velocity_floor = 0.05
     live_playback_started = False
     last_mode = None
-    prev_gps_sample = None
-    prev_gps_velocity = None
+    prev_imu_sample_t = None
+    imu_speed_estimate = 0.0
 
     try:
         while True:
@@ -323,8 +627,8 @@ async def async_ble_loop(window):
 
                 if window.sourceType != "Bluetooth":
                     live_playback_started = False
-                    prev_gps_sample = None
-                    prev_gps_velocity = None
+                    prev_imu_sample_t = None
+                    imu_speed_estimate = 0.0
                     if data_getter.is_connected():
                         window.text_console.log_message(
                             "Bluetooth mode disabled. Disconnecting BLE client.",
@@ -365,55 +669,51 @@ async def async_ble_loop(window):
 
                 if imu_data is not None or gps_data is not None:
                     live_point = {}
+                    imu_speed_sample = None
 
                     # IMU contributes orientation and acceleration only
                     if imu_data is not None:
+                        raw_ax = float(imu_data["ax"])
+                        ax_for_integration = raw_ax * imu_accel_scale
+                        if abs(ax_for_integration) < imu_accel_deadband:
+                            ax_for_integration = 0.0
+
                         live_point.update({
                             "yaw":   imu_data["yaw"],
                             "pitch": imu_data["pitch"],
                             "roll":  imu_data["roll"],
-                            "ax":    imu_data["ax"],
+                            "ax_raw": raw_ax,
+                            "ax":    ax_for_integration,
                             "ay":    imu_data["ay"],
                             "az":    imu_data["az"],
                         })
+
+                        if prev_imu_sample_t is not None:
+                            imu_dt = now_s - prev_imu_sample_t
+                            if imu_dt > 0:
+                                imu_speed_estimate = max(0.0, imu_speed_estimate + ax_for_integration * imu_dt)
+                                if imu_speed_estimate < imu_velocity_floor:
+                                    imu_speed_estimate = 0.0
+                                imu_speed_sample = imu_speed_estimate
+                        prev_imu_sample_t = now_s
+
+                        # Prefer IMU integrated speed for live telemetry when IMU exists.
+                        live_point["speed"] = imu_speed_sample if imu_speed_sample is not None else imu_speed_estimate
 
                     # GPS contributes position and velocity
                     if gps_data is not None:
                         lat = gps_data["lat"]
                         lon = gps_data["lon"]
+                        gps_speed = float(gps_data.get("speed", 0.0))
                         live_point["lat"] = lat
                         live_point["lon"] = lon
+                        live_point["speed"] = gps_speed
+                    elif imu_speed_sample is not None:
+                        live_point["speed"] = imu_speed_sample
+                        live_point["x"] = 0.0
+                        live_point["y"] = 0.0
 
-                        if prev_gps_sample is not None:
-                            dt = now_s - prev_gps_sample["t"]
-                            if dt > 0:
-                                prev_lat = prev_gps_sample["lat"]
-                                prev_lon = prev_gps_sample["lon"]
-                                meters_per_deg_lat = 111_320.0
-                                meters_per_deg_lon = 111_320.0 * math.cos(
-                                    math.radians((lat + prev_lat) / 2.0)
-                                )
-                                vx = (lon - prev_lon) * meters_per_deg_lon / dt
-                                vy = (lat - prev_lat) * meters_per_deg_lat / dt
-                                live_point["vx"] = vx
-                                live_point["vy"] = vy
-                                if prev_gps_velocity is not None:
-                                    live_point["ax_w"] = (vx - prev_gps_velocity["vx"]) / dt
-                                    live_point["ay_w"] = (vy - prev_gps_velocity["vy"]) / dt
-                                prev_gps_velocity = {"vx": vx, "vy": vy}
-                            else:
-                                live_point["vx"] = 0.0
-                                live_point["vy"] = 0.0
-                        else:
-                            live_point["vx"] = 0.0
-                            live_point["vy"] = 0.0
-                            prev_gps_velocity = None
-
-                        prev_gps_sample = {"lat": lat, "lon": lon, "t": now_s}
-
-                    speed = math.sqrt(
-                        live_point.get("vx", 0.0)**2 + live_point.get("vy", 0.0)**2
-                    )
+                    speed = live_point.get("speed")
                     source = (
                         "IMU+GPS" if (imu_data is not None and gps_data is not None)
                         else ("IMU" if imu_data is not None else "GPS fallback")
@@ -422,8 +722,8 @@ async def async_ble_loop(window):
                         f"BLE poll complete (source={source}). Speed {speed:.2f} m/s",
                         level="DEBUG"
                     )
-                    window.GPSDisplay.load_data_point(live_point)
-                    if live_playback_started:
+                    window.handle_live_point(live_point)
+                    if live_playback_started and not window.is_bluetooth_review_mode():
                         window.start_playback()
                 else:
                     window.text_console.log_message(
@@ -440,8 +740,8 @@ async def async_ble_loop(window):
                 window.text_console.log_message(f"BLE polling error: {exc}", level="ERROR")
                 await data_getter.disconnect(logger=window.text_console)
                 live_playback_started = False
-                prev_gps_sample = None
-                prev_gps_velocity = None
+                prev_imu_sample_t = None
+                imu_speed_estimate = 0.0
                 window.text_console.log_message(
                     f"Connection lost. Reconnecting in {reconnect_delay_seconds:.1f}s",
                     level="WARN"
@@ -449,22 +749,14 @@ async def async_ble_loop(window):
                 await asyncio.sleep(reconnect_delay_seconds)
                 continue
 
-            await asyncio.sleep(0.5)  # poll every 0.5 seconds
+            await asyncio.sleep(0.1)  # poll every 0.1 seconds
     finally:
         await data_getter.disconnect(logger=window.text_console)
+        window.ble_data_getter = None
 
 def main():
     app = QApplication(sys.argv)
-    selected_mode, accepted = QInputDialog.getItem(
-        None,
-        "Select Startup Mode",
-        "Choose the app mode to start in:",
-        ["Bluetooth", "File"],
-        0,
-        False,
-    )
-    if not accepted:
-        selected_mode = "Bluetooth"
+    selected_mode = "Bluetooth"
 
     window = MainWindow()
     window.set_source_mode(selected_mode)
@@ -473,12 +765,19 @@ def main():
     # Integrate asyncio loop with Qt
     loop = QEventLoop(app)
     asyncio.set_event_loop(loop)
+    app.aboutToQuit.connect(loop.stop)
 
-    loop.create_task(async_ble_loop(window))
-    loop.create_task(async_update_GPS_pos(window))
+    ble_task = loop.create_task(async_ble_loop(window))
+    file_task = loop.create_task(async_update_GPS_pos(window))
 
     with loop:
-        loop.run_forever()
+        try:
+            loop.run_forever()
+        finally:
+            for task in (ble_task, file_task):
+                if not task.done():
+                    task.cancel()
+            loop.run_until_complete(asyncio.gather(ble_task, file_task, return_exceptions=True))
 
 if __name__ == "__main__":
     main()

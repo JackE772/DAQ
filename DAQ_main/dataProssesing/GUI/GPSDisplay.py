@@ -400,6 +400,10 @@ class GPSWidget(QWidget):
     def set_playback_status(self, status):
         self.playback = status
 
+        if getattr(self.main_window, "sourceType", None) == "Bluetooth" and not getattr(self.main_window, "bluetooth_review_mode", False):
+            self.timer.stop()
+            return
+
         if status:
             #add this code back to change is so prev loaded points are cleard when pause it pressed
             #self.playback_index = 0
@@ -666,18 +670,37 @@ class GPSWidget(QWidget):
 
         return rows
             
-    def load_data_point(self, point):
+    def load_data_point(self, point, emit_update=True):
         try:
             # Prefer GPS coordinates for map placement, fallback to IMU-propagated x/y.
             if "lat" in point and "lon" in point:
                 x = float(point["lat"])
                 y = float(point["lon"])
             else:
-                x = float(point["x"])
-                y = float(point["y"])
+                x = float(point.get("x", 0.0))
+                y = float(point.get("y", 0.0))
 
-            speed = math.sqrt(float(point["vx"]) * float(point["vx"]) + float(point["vy"]) * float(point["vy"]))
-            acceleration = math.sqrt(float(point["ax_w"]) * float(point["ax_w"]) + float(point["ay_w"]) * float(point["ay_w"]))
+            if "speed" in point:
+                speed = float(point["speed"])
+            else:
+                speed = math.sqrt(
+                    float(point.get("vx", 0.0)) * float(point.get("vx", 0.0))
+                    + float(point.get("vy", 0.0)) * float(point.get("vy", 0.0))
+                )
+
+            if "ax" in point or "ay" in point or "az" in point:
+                acceleration = math.sqrt(
+                    float(point.get("ax", 0.0)) * float(point.get("ax", 0.0))
+                    + float(point.get("ay", 0.0)) * float(point.get("ay", 0.0))
+                    + float(point.get("az", 0.0)) * float(point.get("az", 0.0))
+                )
+            elif "ax_w" in point and "ay_w" in point:
+                acceleration = math.sqrt(
+                    float(point["ax_w"]) * float(point["ax_w"])
+                    + float(point["ay_w"]) * float(point["ay_w"])
+                )
+            else:
+                acceleration = 0.0
 
             if self.live_start_time_s is None:
                 self.live_start_time_s = time.monotonic()
@@ -694,5 +717,20 @@ class GPSWidget(QWidget):
                 a=acceleration,
                 t=elapsed_ms
             ))
+
+            if emit_update:
+                # In live mode, emit immediately so telemetry widgets update even
+                # between timer playback ticks.
+                new_index = len(self.data) - 1
+                self.current_index = new_index
+
+                if getattr(self.main_window, "sourceType", None) == "Bluetooth" and not getattr(self.main_window, "bluetooth_review_mode", False):
+                    self.playback_index = new_index
+                elif self.playback_index >= len(self.data):
+                    self.playback_index = new_index
+
+                self._emit_outputs_for_index(new_index)
+                self._emit_playback_position(new_index)
+                self.update()
         except (KeyError, TypeError, ValueError):
             self.main_window.text_console.log_message("Skipped invalid live data point")

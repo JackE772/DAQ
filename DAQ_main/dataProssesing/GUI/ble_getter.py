@@ -76,20 +76,21 @@ class DataGetter:
     async def read_gps_status(self, logger=None):
         if self.is_connected():
             gps_data = await self.client.read_gatt_char(self.GPS_STATUS_CHARACTERISTIC_UUID)
-            if len(gps_data) < 8:
+            if len(gps_data) < 12:
                 now_s = time.monotonic()
                 if logger and (now_s - self._last_short_gps_log_s) > 2.0:
                     logger.log_message(
-                        f"GPS payload too short: expected 8 bytes, got {len(gps_data)} bytes",
+                        f"GPS payload too short: expected 12 bytes, got {len(gps_data)} bytes",
                         level="WARN"
                     )
                     self._last_short_gps_log_s = now_s
                 return None
 
-            lat, lon = struct.unpack('<ff', gps_data[:8])
+            lat, lon, speed = struct.unpack('<fff', gps_data[:12])
             return {
                 "lat": lat,
                 "lon": lon,
+                "speed": speed,
             }
         return None
 

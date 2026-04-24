@@ -37,7 +37,7 @@
 #define GPS_UUID        "d69584e5-5142-414f-a90e-07c271d18575"
 #define IMU_UUID        "d69584e5-5142-414f-a90e-07c271d18576"
 
-// GPS payload:  float lat, float lon                     (8 bytes)
+// GPS payload:  float lat, float lon, float speed        (12 bytes)
 // IMU payload:  float yaw, pitch, roll, ax, ay, az       (24 bytes)
 
 // ── Sample rate ───────────────────────────────────────────────
@@ -206,8 +206,8 @@ void loop() {
     Serial.println(row);
     if (sdOK && logFile) { logFile.println(row); logFile.flush(); }
 
-    // BLE – GPS characteristic: lat, lon as floats (8 bytes)
-    float gpsPayload[2] = { (float)lat, (float)lon };
+    // BLE – GPS characteristic: lat, lon, speed as floats (12 bytes)
+    float gpsPayload[3] = { (float)lat, (float)lon, speed };
     gpsChar->setValue((uint8_t*)gpsPayload, sizeof(gpsPayload));
     gpsChar->notify();
 
