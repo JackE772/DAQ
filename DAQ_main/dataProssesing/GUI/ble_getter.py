@@ -6,7 +6,7 @@ import sys
 import time
 
 class DataGetter:
-    DEVICE_ADDRESS = "CAR_GO_VROOM"
+    DEVICE_ADDRESS = "CAR_GOES_VROOM"
 
     CURRENT_TIME_CHARACTERISTIC_UUID = "f4c8e2b3-3d1e-4f3a-8e2e-5f6b8c9d0a1c"
     GPS_STATUS_CHARACTERISTIC_UUID   = "d69584e5-5142-414f-a90e-07c271d18575"
@@ -38,7 +38,7 @@ class DataGetter:
 
         target = None
         for d in devices:
-            if d.name and "car_go_vroom" in d.name.lower():
+            if d.name and "car_goes_vroom" in d.name.lower():
                 target = d
                 if logger:
                     logger.log_message(f"Target peripheral found: {d.name} ({d.address})", level="SUCCESS")
@@ -96,29 +96,23 @@ class DataGetter:
     async def read_imu_data(self, logger=None):
         if self.is_connected():
             imu_data = await self.client.read_gatt_char(self.IMU_CHARACTERISTIC_UUID)
-            if len(imu_data) < 48:
+            if len(imu_data) < 24:
                 now_s = time.monotonic()
                 if logger and (now_s - self._last_short_imu_log_s) > 2.0:
                     logger.log_message(
-                        f"IMU payload too short: expected 48 bytes, got {len(imu_data)} bytes",
+                        f"IMU payload too short: expected 24 bytes, got {len(imu_data)} bytes",
                         level="WARN"
                     )
                     self._last_short_imu_log_s = now_s
                 return None
 
-            imu_values = struct.unpack('<ffffffffffff', imu_data[:48])
+            imu_values = struct.unpack('<ffffff', imu_data[:24])
             return {
-                "yaw": imu_values[0],
-                "roll": imu_values[1],
-                "pitch": imu_values[2],
-                "ax_b": imu_values[3],
-                "ay_b": imu_values[4],
-                "az_b": imu_values[5],
-                "ax_w": imu_values[6],
-                "ay_w": imu_values[7],
-                "vx": imu_values[8],
-                "vy": imu_values[9],
-                "x": imu_values[10],
-                "y": imu_values[11],
+                "yaw":   imu_values[0],
+                "pitch": imu_values[1],
+                "roll":  imu_values[2],
+                "ax":    imu_values[3],
+                "ay":    imu_values[4],
+                "az":    imu_values[5],
             }
         return None

@@ -363,104 +363,73 @@ async def async_ble_loop(window):
                     level="DEBUG"
                 )
 
-                if imu_data is not None:
-                    speed = math.sqrt(imu_data["vx"]**2 + imu_data["vy"]**2)
-                    gps_state = "available" if gps_data is not None else "unavailable"
+                if imu_data is not None or gps_data is not None:
+                    live_point = {}
+
+                    # IMU contributes orientation and acceleration only
+                    if imu_data is not None:
+                        live_point.update({
+                            "yaw":   imu_data["yaw"],
+                            "pitch": imu_data["pitch"],
+                            "roll":  imu_data["roll"],
+                            "ax":    imu_data["ax"],
+                            "ay":    imu_data["ay"],
+                            "az":    imu_data["az"],
+                        })
+
+                    # GPS contributes position and velocity
+                    if gps_data is not None:
+                        lat = gps_data["lat"]
+                        lon = gps_data["lon"]
+                        live_point["lat"] = lat
+                        live_point["lon"] = lon
+
+                        if prev_gps_sample is not None:
+                            dt = now_s - prev_gps_sample["t"]
+                            if dt > 0:
+                                prev_lat = prev_gps_sample["lat"]
+                                prev_lon = prev_gps_sample["lon"]
+                                meters_per_deg_lat = 111_320.0
+                                meters_per_deg_lon = 111_320.0 * math.cos(
+                                    math.radians((lat + prev_lat) / 2.0)
+                                )
+                                vx = (lon - prev_lon) * meters_per_deg_lon / dt
+                                vy = (lat - prev_lat) * meters_per_deg_lat / dt
+                                live_point["vx"] = vx
+                                live_point["vy"] = vy
+                                if prev_gps_velocity is not None:
+                                    live_point["ax_w"] = (vx - prev_gps_velocity["vx"]) / dt
+                                    live_point["ay_w"] = (vy - prev_gps_velocity["vy"]) / dt
+                                prev_gps_velocity = {"vx": vx, "vy": vy}
+                            else:
+                                live_point["vx"] = 0.0
+                                live_point["vy"] = 0.0
+                        else:
+                            live_point["vx"] = 0.0
+                            live_point["vy"] = 0.0
+                            prev_gps_velocity = None
+
+                        prev_gps_sample = {"lat": lat, "lon": lon, "t": now_s}
+
+                    speed = math.sqrt(
+                        live_point.get("vx", 0.0)**2 + live_point.get("vy", 0.0)**2
+                    )
+                    source = (
+                        "IMU+GPS" if (imu_data is not None and gps_data is not None)
+                        else ("IMU" if imu_data is not None else "GPS fallback")
+                    )
                     window.text_console.log_message(
-                        f"BLE poll complete (source=IMU). GPS {gps_state}. Speed {speed:.2f} m/s",
+                        f"BLE poll complete (source={source}). Speed {speed:.2f} m/s",
                         level="DEBUG"
                     )
-
-                    live_point = dict(imu_data)
-                    if gps_data is not None:
-                        live_point["lat"] = gps_data["lat"]
-                        live_point["lon"] = gps_data["lon"]
-                        prev_gps_sample = {
-                            "lat": gps_data["lat"],
-                            "lon": gps_data["lon"],
-                            "t": now_s,
-                        }
-                        prev_gps_velocity = {
-                            "vx": imu_data["vx"],
-                            "vy": imu_data["vy"],
-                        }
                     window.GPSDisplay.load_data_point(live_point)
                     if live_playback_started:
                         window.start_playback()
                 else:
-                    if gps_data is not None and prev_gps_sample is not None:
-                        dt = now_s - prev_gps_sample["t"]
-                        if dt > 0:
-                            lat = gps_data["lat"]
-                            lon = gps_data["lon"]
-                            prev_lat = prev_gps_sample["lat"]
-                            prev_lon = prev_gps_sample["lon"]
-
-                            meters_per_deg_lat = 111_320.0
-                            meters_per_deg_lon = 111_320.0 * math.cos(math.radians((lat + prev_lat) / 2.0))
-
-                            dx = (lon - prev_lon) * meters_per_deg_lon
-                            dy = (lat - prev_lat) * meters_per_deg_lat
-                            vx = dx / dt
-                            vy = dy / dt
-
-                            if prev_gps_velocity is None:
-                                ax_w = 0.0
-                                ay_w = 0.0
-                            else:
-                                ax_w = (vx - prev_gps_velocity["vx"]) / dt
-                                ay_w = (vy - prev_gps_velocity["vy"]) / dt
-
-                            live_point = {
-                                "vx": vx,
-                                "vy": vy,
-                                "ax_w": ax_w,
-                                "ay_w": ay_w,
-                                "x": 0.0,
-                                "y": 0.0,
-                                "lat": lat,
-                                "lon": lon,
-                            }
-                            window.GPSDisplay.load_data_point(live_point)
-                            if live_playback_started:
-                                window.start_playback()
-
-                            gps_speed = math.sqrt(vx**2 + vy**2)
-                            window.text_console.log_message(
-                                f"BLE poll complete (source=GPS fallback). Speed {gps_speed:.2f} m/s",
-                                level="WARN"
-                            )
-
-                            prev_gps_velocity = {
-                                "vx": vx,
-                                "vy": vy,
-                            }
-                            prev_gps_sample = {
-                                "lat": lat,
-                                "lon": lon,
-                                "t": now_s,
-                            }
-                        else:
-                            window.text_console.log_message(
-                                "IMU unavailable. GPS fallback skipped due to invalid dt.",
-                                level="WARN"
-                            )
-                    elif gps_data is not None:
-                        prev_gps_sample = {
-                            "lat": gps_data["lat"],
-                            "lon": gps_data["lon"],
-                            "t": now_s,
-                        }
-                        prev_gps_velocity = None
-                        window.text_console.log_message(
-                            "IMU unavailable. Captured first GPS sample for fallback estimation.",
-                            level="WARN"
-                        )
-                    else:
-                        window.text_console.log_message(
-                            "BLE poll incomplete. IMU and GPS payload unavailable.",
-                            level="WARN"
-                        )
+                    window.text_console.log_message(
+                        "BLE poll incomplete. IMU and GPS payload unavailable.",
+                        level="WARN"
+                    )
                     
                     
                     
